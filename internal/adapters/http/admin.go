@@ -37,15 +37,8 @@ type adminHandler struct {
 }
 
 func (h adminHandler) Login(c *gin.Context) {
-	if c.ContentType() != "application/json" {
-		httperr.ErrorHandler(httperr.BadRequestError("Content-Type deve ser application/json"), c)
-		return
-	}
-	c.Request.Body = nethttp.MaxBytesReader(c.Writer, c.Request.Body, maxBodyBytes)
-
 	var req loginRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httperr.ErrorHandler(httperr.BadRequestError("e-mail e senha são obrigatórios"), c)
+	if !bindJSON(c, &req) {
 		return
 	}
 
@@ -99,4 +92,19 @@ func rateLimit(l *rateLimiter) gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+// bindJSON exige Content-Type JSON (defesa extra contra CSRF por formulário), limita o corpo
+// e valida os campos obrigatórios. Em caso de falha já responde 400 e devolve false.
+func bindJSON(c *gin.Context, dst any) bool {
+	if c.ContentType() != "application/json" {
+		httperr.ErrorHandler(httperr.BadRequestError("Content-Type deve ser application/json"), c)
+		return false
+	}
+	c.Request.Body = nethttp.MaxBytesReader(c.Writer, c.Request.Body, maxBodyBytes)
+	if err := c.ShouldBindJSON(dst); err != nil {
+		httperr.ErrorHandler(httperr.BadRequestError("corpo da requisição inválido"), c)
+		return false
+	}
+	return true
 }

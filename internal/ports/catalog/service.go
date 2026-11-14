@@ -1,7 +1,5 @@
 package ports
 
-import "context"
-
 type SaveProduct struct {
 	Name        string
 	Category    string
@@ -10,6 +8,20 @@ type SaveProduct struct {
 	Stock       int
 }
 
-type SaveHandler interface {
-	Handle(ctx context.Context, cmd SaveProduct) error
+type UpdateProduct struct {
+	UID         string
+	Name        string
+	Category    string
+	Description string
+	PriceCents  int64
+	Active      bool
 }
+
+type AdjustStock struct {
+	UID      string
+	Delta    int
+	Reason   string
+	AdminUID string
+}
+
+const MaxReasonLen = 200

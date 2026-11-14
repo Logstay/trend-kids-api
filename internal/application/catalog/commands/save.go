@@ -12,21 +12,25 @@ type SaveHandler struct {
 	Repository ports.Repository
 }
 
-func (h SaveHandler) Handle(ctx context.Context, cmd ports.SaveProduct) error {
+func (h SaveHandler) Handle(ctx context.Context, cmd ports.SaveProduct) (catalog.Product, error) {
 	product, err := build(cmd)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	exists, err := h.Repository.ExistsBySlug(ctx, product.Slug())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if exists {
-		return httperr.ConflictError("já existe produto com esse nome")
+		return nil, httperr.ConflictError("já existe produto com esse nome")
 	}
 
-	return h.Repository.Save(ctx, product)
+	if err := h.Repository.Save(ctx, product); err != nil {
+		return nil, err
+	}
+	// Relê para devolver também os campos preenchidos pelo banco (datas).
+	return h.Repository.GetByUID(ctx, product.UID())
 }
 
 func build(cmd ports.SaveProduct) (catalog.Product, error) {

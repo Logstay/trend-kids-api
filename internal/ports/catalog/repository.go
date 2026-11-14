@@ -25,6 +25,8 @@ type Filter struct {
 	Sort     Sort
 	Limit    int
 	Offset   int
+	// IncludeInactive é só para o painel; a vitrine pública nunca enxerga produto inativo.
+	IncludeInactive bool
 }
 
 // Repository é o contrato de persistência do catálogo.
@@ -34,4 +36,19 @@ type Repository interface {
 	GetBySlug(ctx context.Context, slug string) (catalog.Product, error)
 	ExistsBySlug(ctx context.Context, slug string) (bool, error)
 	List(ctx context.Context, filter Filter) ([]catalog.Product, error)
+
+	// GetByUID enxerga produtos inativos; devolve httperr.NotFoundError se não existir.
+	GetByUID(ctx context.Context, uid string) (catalog.Product, error)
+	// Update grava nome, categoria, descrição, preço e ativo. Nunca altera o estoque.
+	Update(ctx context.Context, product catalog.Product) error
+	// AdjustStock soma delta ao estoque de forma atômica e registra a movimentação.
+	// Devolve o novo estoque; httperr.ConflictError se o saldo ficaria negativo.
+	AdjustStock(ctx context.Context, m StockMovement) (newStock int, err error)
+}
+
+type StockMovement struct {
+	ProductUID string
+	Delta      int
+	Reason     string
+	AdminUID   string
 }

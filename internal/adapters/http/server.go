@@ -24,6 +24,9 @@ type Deps struct {
 	CookieSecure bool
 	LoginLimit   int
 	LoginWindow  time.Duration
+
+	// Catalog liga as rotas /v1/admin/products (exigem Login configurado).
+	Catalog *AdminCatalog
 }
 
 func NewRouter(d Deps) nethttp.Handler {
@@ -66,4 +69,13 @@ func registerAdmin(g *gin.RouterGroup, d Deps) {
 	g.POST("/login", rateLimit(newRateLimiter(limit, window, time.Now)), a.Login)
 	g.POST("/logout", a.Logout)
 	g.GET("/me", a.RequireAdmin, a.Me)
+
+	if d.Catalog != nil {
+		ch := adminCatalogHandler{AdminCatalog: *d.Catalog}
+		products := g.Group("/products", a.RequireAdmin)
+		products.GET("", ch.List)
+		products.POST("", ch.Create)
+		products.PUT("/:uid", ch.Update)
+		products.PATCH("/:uid/stock", ch.AdjustStock)
+	}
 }

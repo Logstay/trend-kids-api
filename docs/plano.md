@@ -13,5 +13,5 @@ Deliberadamente fora (ver seção 6 da spec): Kafka, k8s/Helm, New Relic, tipos 
 | 4 | HTTP (Gin): `GET /v1/products`, `GET /v1/products/:slug`, `/health`, CORS; bootstrap em `cmd/` | feita |
 | 5 | Front: `lib/api.ts` consome a API; `/loja` e vitrines da landing leem do back | feita |
 | 6a | Identidade: `admin_users`, login/logout/`me` com cookie HttpOnly, argon2id, limite de tentativas, `cmd/createadmin` | feita |
-| 6b | Admin do catálogo: `POST/PUT /v1/admin/products`, ajuste de estoque com movimentação (rotas protegidas) | próxima |
-| 7 | Front: tela `/admin` (login, produtos, estoque) | |
+| 6b | Admin do catálogo: `POST/PUT /v1/admin/products`, ajuste de estoque com movimentação (rotas protegidas) | feita |
+| 7 | Front: tela `/admin` (login, produtos, estoque) | próxima |

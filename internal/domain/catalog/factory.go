@@ -16,6 +16,7 @@ type ProductFactory interface {
 	PriceCents(cents int64) error
 	Stock(stock int) error
 	Description(description string)
+	Active(active bool)
 	Build() Product
 }
 
@@ -27,13 +28,22 @@ func NewProductFactory() ProductFactory {
 	return &productFactory{product: &product{uid: uuid.NewString(), active: true}}
 }
 
+// NewProductFactoryFrom parte de um produto existente (edição). Identidade, slug e estoque são mantidos.
+func NewProductFactoryFrom(p Product) ProductFactory {
+	copied := *(p.(*product))
+	return &productFactory{product: &copied}
+}
+
 func (f *productFactory) Name(name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return httperr.RequiredError("nome do produto é obrigatório")
 	}
 	f.product.name = name
-	f.product.slug = slugify(name)
+	// O slug é a URL pública: definido uma vez, na criação, e nunca mais muda.
+	if f.product.slug == "" {
+		f.product.slug = slugify(name)
+	}
 	return nil
 }
 
@@ -65,6 +75,8 @@ func (f *productFactory) Stock(stock int) error {
 func (f *productFactory) Description(description string) {
 	f.product.description = strings.TrimSpace(description)
 }
+
+func (f *productFactory) Active(active bool) { f.product.active = active }
 
 func (f *productFactory) Build() Product { return f.product }
 

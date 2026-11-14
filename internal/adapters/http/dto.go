@@ -14,6 +14,7 @@ type ProductResponse struct {
 	Description string    `json:"description"`
 	PriceCents  int64     `json:"price_cents"`
 	Stock       int       `json:"stock"`
+	Active      bool      `json:"active"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -24,6 +25,6 @@ type ListResponse struct {
 func toResponse(p catalog.Product) ProductResponse {
 	return ProductResponse{
 		ID: p.UID(), Name: p.Name(), Slug: p.Slug(), Category: string(p.Category()),
-		Description: p.Description(), PriceCents: p.PriceCents(), Stock: p.Stock(), CreatedAt: p.CreatedAt(),
+		Description: p.Description(), PriceCents: p.PriceCents(), Stock: p.Stock(), Active: p.Active(), CreatedAt: p.CreatedAt(),
 	}
 }

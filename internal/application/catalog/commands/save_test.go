@@ -19,19 +19,21 @@ func validCmd() ports.SaveProduct {
 
 func TestSave_PersistsValidProduct(t *testing.T) {
 	repo := &catalogtest.Repo{}
-	err := commands.SaveHandler{Repository: repo}.Handle(context.Background(), validCmd())
+	created, err := commands.SaveHandler{Repository: repo}.Handle(context.Background(), validCmd())
 
 	require.NoError(t, err)
 	require.Len(t, repo.Products, 1)
 	assert.Equal(t, "classic-clog-rosa", repo.Products[0].Slug())
+	assert.Equal(t, repo.Products[0].UID(), created.UID(), "devolve o produto criado")
 }
 
 func TestSave_RejectsDuplicateSlug(t *testing.T) {
 	repo := &catalogtest.Repo{}
 	h := commands.SaveHandler{Repository: repo}
-	require.NoError(t, h.Handle(context.Background(), validCmd()))
+	_, err0 := h.Handle(context.Background(), validCmd())
+	require.NoError(t, err0)
 
-	err := h.Handle(context.Background(), validCmd())
+	_, err := h.Handle(context.Background(), validCmd())
 
 	var conflict httperr.ConflictError
 	assert.True(t, errors.As(err, &conflict))
@@ -43,7 +45,7 @@ func TestSave_InvalidInputDoesNotPersist(t *testing.T) {
 	cmd := validCmd()
 	cmd.PriceCents = 0
 
-	err := commands.SaveHandler{Repository: repo}.Handle(context.Background(), cmd)
+	_, err := commands.SaveHandler{Repository: repo}.Handle(context.Background(), cmd)
 
 	var req httperr.RequiredError
 	assert.True(t, errors.As(err, &req))

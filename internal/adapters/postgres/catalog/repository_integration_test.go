@@ -28,12 +28,16 @@ func newRepo(t *testing.T) (*pgcatalog.Repository, *sqlx.DB) {
 	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })
 
-	migration, err := os.ReadFile("../../../../config/migrations/V1__create_products.sql")
+	_, err = db.Exec(`DROP TABLE IF EXISTS stock_movements`)
 	require.NoError(t, err)
 	_, err = db.Exec(`DROP TABLE IF EXISTS products`)
 	require.NoError(t, err)
-	_, err = db.Exec(string(migration))
-	require.NoError(t, err)
+	for _, file := range []string{"V1__create_products.sql", "V3__create_stock_movements.sql"} {
+		migration, err := os.ReadFile("../../../../config/migrations/" + file)
+		require.NoError(t, err)
+		_, err = db.Exec(string(migration))
+		require.NoError(t, err)
+	}
 
 	return pgcatalog.NewRepository(db), db
 }
