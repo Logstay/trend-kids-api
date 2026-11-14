@@ -20,3 +20,5 @@ Deliberadamente fora (ver seção 6 da spec): Kafka, k8s/Helm, New Relic, tipos 
 | 9 | Front: sacola, checkout (cria o pedido na API + abre o WhatsApp) e acompanhamento do pedido | feita (sem acompanhamento) |
 | 10 | Dashboard do admin com dados reais | |
 | 11 | Configurações da loja no admin (WhatsApp, telefone, Instagram, cidade, descrição) lidas pelo site público | feita |
+| 12 | Vendedoras (cadastro no admin) separadas do WhatsApp de contato; seletor "com quem falar" no site | feita |
+| 13 | Foto do produto (upload no admin, validação pelo conteúdo, servida em /uploads) | feita |
