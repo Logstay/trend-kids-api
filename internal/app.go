@@ -9,12 +9,15 @@ import (
 	pgcatalog "github.com/Logstay/trend-kids-api/internal/adapters/postgres/catalog"
 	pgidentity "github.com/Logstay/trend-kids-api/internal/adapters/postgres/identity"
 	pgorders "github.com/Logstay/trend-kids-api/internal/adapters/postgres/orders"
+	pgsettings "github.com/Logstay/trend-kids-api/internal/adapters/postgres/settings"
 	"github.com/Logstay/trend-kids-api/internal/adapters/security"
 	catalogcommands "github.com/Logstay/trend-kids-api/internal/application/catalog/commands"
 	catalogqueries "github.com/Logstay/trend-kids-api/internal/application/catalog/queries"
 	identitycommands "github.com/Logstay/trend-kids-api/internal/application/identity/commands"
 	ordercommands "github.com/Logstay/trend-kids-api/internal/application/orders/commands"
 	orderqueries "github.com/Logstay/trend-kids-api/internal/application/orders/queries"
+	settingscommands "github.com/Logstay/trend-kids-api/internal/application/settings/commands"
+	settingsqueries "github.com/Logstay/trend-kids-api/internal/application/settings/queries"
 	"github.com/Logstay/trend-kids-api/internal/domain/orders"
 	"github.com/jmoiron/sqlx"
 )
@@ -29,6 +32,7 @@ func NewHandler(db *sqlx.DB, cfg *config.Config) (nethttp.Handler, error) {
 	catalogRepo := pgcatalog.NewRepository(db)
 	adminRepo := pgidentity.NewRepository(db)
 	orderRepo := pgorders.NewRepository(db)
+	settingsRepo := pgsettings.NewRepository(db)
 	shipping := orders.ShippingPolicy{FlatCents: cfg.ShippingFlatCents, FreeAboveCents: cfg.ShippingFreeAboveCents}
 
 	return apphttp.NewRouter(apphttp.Deps{
@@ -42,6 +46,10 @@ func NewHandler(db *sqlx.DB, cfg *config.Config) (nethttp.Handler, error) {
 		Get:            catalogqueries.GetHandler{Repository: catalogRepo},
 		AllowedOrigins: cfg.AllowedOrigins,
 		TrustedProxies: cfg.TrustedProxies,
+		Settings: &apphttp.SettingsRoutes{
+			Get:    settingsqueries.GetHandler{Repository: settingsRepo},
+			Update: settingscommands.UpdateHandler{Repository: settingsRepo},
+		},
 		AdminOrders: &apphttp.AdminOrders{
 			List:         orderqueries.AdminListHandler{Orders: orderRepo},
 			Get:          orderqueries.AdminGetHandler{Orders: orderRepo},

@@ -3,11 +3,11 @@ package orders
 import (
 	"crypto/rand"
 	"math/big"
-	"regexp"
 	"strings"
 	"unicode/utf8"
 
 	httperr "github.com/Logstay/trend-kids-api/pkg/errors"
+	"github.com/Logstay/trend-kids-api/pkg/phone"
 	"github.com/google/uuid"
 )
 
@@ -31,8 +31,6 @@ const (
 	maxUnitPriceCents      int64 = 100_000_000
 )
 
-var phoneChars = regexp.MustCompile(`^[\d\s()+\-]+$`)
-
 func (f *orderFactory) Customer(name, phone, neighborhood string) error {
 	name, neighborhood = strings.TrimSpace(name), strings.TrimSpace(neighborhood)
 	if n := utf8.RuneCountInString(name); n < minNameLen || n > maxNameLen {
@@ -50,32 +48,7 @@ func (f *orderFactory) Customer(name, phone, neighborhood string) error {
 }
 
 // NormalizePhone devolve só os dígitos nacionais (DDD + número), sem o 55.
-func NormalizePhone(raw string) (string, bool) {
-	raw = strings.TrimSpace(raw)
-	if !phoneChars.MatchString(raw) {
-		return "", false
-	}
-	var b strings.Builder
-	for _, r := range raw {
-		if r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		}
-	}
-	d := b.String()
-	if (len(d) == 12 || len(d) == 13) && strings.HasPrefix(d, "55") {
-		d = d[2:]
-	}
-	if len(d) != 10 && len(d) != 11 {
-		return "", false
-	}
-	if d[0] == '0' || d[1] == '0' { // DDD vai de 11 a 99
-		return "", false
-	}
-	if len(d) == 11 && d[2] != '9' { // celular começa com 9
-		return "", false
-	}
-	return d, true
-}
+func NormalizePhone(raw string) (string, bool) { return phone.Normalize(raw) }
 
 func (f *orderFactory) AddItem(productUID, name string, unitPriceCents int64, quantity int) error {
 	name = strings.TrimSpace(name)

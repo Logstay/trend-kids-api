@@ -19,3 +19,4 @@ Deliberadamente fora (ver seção 6 da spec): Kafka, k8s/Helm, New Relic, tipos 
 | 8b | Admin de pedidos: lista, mudança de status validada (`new→paid→shipped→delivered`), cancelamento devolvendo estoque, histórico | feita |
 | 9 | Front: sacola, checkout (cria o pedido na API + abre o WhatsApp) e acompanhamento do pedido | feita (sem acompanhamento) |
 | 10 | Dashboard do admin com dados reais | |
+| 11 | Configurações da loja no admin (WhatsApp, telefone, Instagram, cidade, descrição) lidas pelo site público | feita |
