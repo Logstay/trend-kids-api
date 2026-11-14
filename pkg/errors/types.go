@@ -21,3 +21,8 @@ type InternalServerError string
 
 func (e InternalServerError) Error() string   { return string(e) }
 func (e InternalServerError) StatusCode() int { return http.StatusInternalServerError }
+
+type BadRequestError string
+
+func (e BadRequestError) Error() string   { return string(e) }
+func (e BadRequestError) StatusCode() int { return http.StatusBadRequest }
