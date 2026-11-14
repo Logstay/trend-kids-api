@@ -17,5 +17,5 @@ Deliberadamente fora (ver seção 6 da spec): Kafka, k8s/Helm, New Relic, tipos 
 | 7 | Front: tela `/admin` (login, produtos, estoque) | feita |
 | 8a | Pedidos: `POST /v1/orders` (preço do catálogo, estoque baixado na mesma transação), `POST /v1/orders/lookup` | feita |
 | 8b | Admin de pedidos: lista, mudança de status validada (`new→paid→shipped→delivered`), cancelamento devolvendo estoque, histórico | feita |
-| 9 | Front: sacola, checkout (cria o pedido na API + abre o WhatsApp) e acompanhamento do pedido | |
+| 9 | Front: sacola, checkout (cria o pedido na API + abre o WhatsApp) e acompanhamento do pedido | feita (sem acompanhamento) |
 | 10 | Dashboard do admin com dados reais | |
