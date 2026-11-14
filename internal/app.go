@@ -10,6 +10,7 @@ import (
 	pgcatalog "github.com/Logstay/trend-kids-api/internal/adapters/postgres/catalog"
 	pgidentity "github.com/Logstay/trend-kids-api/internal/adapters/postgres/identity"
 	pgorders "github.com/Logstay/trend-kids-api/internal/adapters/postgres/orders"
+	pgsellers "github.com/Logstay/trend-kids-api/internal/adapters/postgres/sellers"
 	pgsettings "github.com/Logstay/trend-kids-api/internal/adapters/postgres/settings"
 	"github.com/Logstay/trend-kids-api/internal/adapters/security"
 	catalogcommands "github.com/Logstay/trend-kids-api/internal/application/catalog/commands"
@@ -17,6 +18,8 @@ import (
 	identitycommands "github.com/Logstay/trend-kids-api/internal/application/identity/commands"
 	ordercommands "github.com/Logstay/trend-kids-api/internal/application/orders/commands"
 	orderqueries "github.com/Logstay/trend-kids-api/internal/application/orders/queries"
+	sellercommands "github.com/Logstay/trend-kids-api/internal/application/sellers/commands"
+	sellerqueries "github.com/Logstay/trend-kids-api/internal/application/sellers/queries"
 	settingscommands "github.com/Logstay/trend-kids-api/internal/application/settings/commands"
 	settingsqueries "github.com/Logstay/trend-kids-api/internal/application/settings/queries"
 	"github.com/Logstay/trend-kids-api/internal/domain/orders"
@@ -34,6 +37,7 @@ func NewHandler(db *sqlx.DB, cfg *config.Config, logger *slog.Logger) (nethttp.H
 	adminRepo := pgidentity.NewRepository(db)
 	orderRepo := pgorders.NewRepository(db)
 	settingsRepo := pgsettings.NewRepository(db)
+	sellerRepo := pgsellers.NewRepository(db)
 	shipping := orders.ShippingPolicy{FlatCents: cfg.ShippingFlatCents, FreeAboveCents: cfg.ShippingFreeAboveCents}
 
 	return apphttp.NewRouter(apphttp.Deps{
@@ -48,6 +52,12 @@ func NewHandler(db *sqlx.DB, cfg *config.Config, logger *slog.Logger) (nethttp.H
 		AllowedOrigins: cfg.AllowedOrigins,
 		Logger:         logger,
 		TrustedProxies: cfg.TrustedProxies,
+		Sellers: &apphttp.SellersRoutes{
+			List:   sellerqueries.ListHandler{Repository: sellerRepo},
+			Create: sellercommands.CreateHandler{Repository: sellerRepo},
+			Update: sellercommands.UpdateHandler{Repository: sellerRepo},
+			Delete: sellercommands.DeleteHandler{Repository: sellerRepo},
+		},
 		Settings: &apphttp.SettingsRoutes{
 			Get:    settingsqueries.GetHandler{Repository: settingsRepo},
 			Update: settingscommands.UpdateHandler{Repository: settingsRepo},

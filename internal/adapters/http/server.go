@@ -48,6 +48,9 @@ type Deps struct {
 	// AdminOrders liga as rotas /v1/admin/orders (exigem Login configurado).
 	AdminOrders *AdminOrders
 
+	// Sellers liga GET /v1/sellers (público) e o CRUD em /v1/admin/sellers (exige Login configurado).
+	Sellers *SellersRoutes
+
 	// Settings liga GET /v1/settings (público) e PUT /v1/admin/settings (exige Login configurado).
 	Settings *SettingsRoutes
 
@@ -87,6 +90,10 @@ func NewRouter(d Deps) nethttp.Handler {
 		v1.GET("/settings", settingsHandler{SettingsRoutes: *d.Settings}.Get)
 	}
 
+	if d.Sellers != nil {
+		v1.GET("/sellers", sellersHandler{SellersRoutes: *d.Sellers}.PublicList)
+	}
+
 	if d.Orders != nil {
 		oh := ordersHandler{Orders: *d.Orders}
 		limit, window := withDefaults(d.OrderLimit, d.OrderWindow, defaultOrderLimit)
@@ -115,6 +122,15 @@ func registerAdmin(g *gin.RouterGroup, d Deps) {
 		products.POST("", ch.Create)
 		products.PUT("/:uid", ch.Update)
 		products.PATCH("/:uid/stock", ch.AdjustStock)
+	}
+
+	if d.Sellers != nil {
+		sh := sellersHandler{SellersRoutes: *d.Sellers}
+		sel := g.Group("/sellers", a.RequireAdmin)
+		sel.GET("", sh.AdminList)
+		sel.POST("", sh.CreateSeller)
+		sel.PUT("/:uid", sh.UpdateSeller)
+		sel.DELETE("/:uid", sh.DeleteSeller)
 	}
 
 	if d.Settings != nil {
