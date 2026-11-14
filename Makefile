@@ -15,7 +15,7 @@ unit_test:
 
 it_test: up
 	@docker exec trendkids-postgres psql -U trendkids -d trendkids -tc "SELECT 1 FROM pg_database WHERE datname='trendkids_test'" | grep -q 1 || docker exec trendkids-postgres psql -U trendkids -d trendkids -q -c "CREATE DATABASE trendkids_test"
-	@TEST_DATABASE_URL="$(TEST_DB_URL)" go test -tags integration ./internal/adapters/...
+	@TEST_DATABASE_URL="$(TEST_DB_URL)" go test -p 1 -tags integration ./internal/adapters/...
 
 run:
 	@set -a; . ./.env; set +a; go run ./cmd

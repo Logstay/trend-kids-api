@@ -28,7 +28,7 @@ func newRepo(t *testing.T) (*pgcatalog.Repository, *sqlx.DB) {
 	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })
 
-	_, err = db.Exec(`DROP TABLE IF EXISTS stock_movements`)
+	_, err = db.Exec(`DROP TABLE IF EXISTS order_items, orders, stock_movements`)
 	require.NoError(t, err)
 	_, err = db.Exec(`DROP TABLE IF EXISTS products`)
 	require.NoError(t, err)

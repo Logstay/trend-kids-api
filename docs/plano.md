@@ -15,3 +15,7 @@ Deliberadamente fora (ver seção 6 da spec): Kafka, k8s/Helm, New Relic, tipos 
 | 6a | Identidade: `admin_users`, login/logout/`me` com cookie HttpOnly, argon2id, limite de tentativas, `cmd/createadmin` | feita |
 | 6b | Admin do catálogo: `POST/PUT /v1/admin/products`, ajuste de estoque com movimentação (rotas protegidas) | feita |
 | 7 | Front: tela `/admin` (login, produtos, estoque) | feita |
+| 8a | Pedidos: `POST /v1/orders` (preço do catálogo, estoque baixado na mesma transação), `POST /v1/orders/lookup` | feita |
+| 8b | Admin de pedidos: lista, mudança de status validada (`new→paid→shipped→delivered`), cancelamento devolvendo estoque, histórico | próxima |
+| 9 | Front: sacola, checkout (cria o pedido na API + abre o WhatsApp) e acompanhamento do pedido | |
+| 10 | Dashboard do admin com dados reais | |

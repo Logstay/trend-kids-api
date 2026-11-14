@@ -10,8 +10,19 @@ import (
 
 const (
 	defaultLoginLimit  = 5
+	defaultOrderLimit  = 10
 	defaultLoginWindow = time.Minute
 )
+
+func withDefaults(limit int, window time.Duration, defaultLimit int) (int, time.Duration) {
+	if limit <= 0 {
+		limit = defaultLimit
+	}
+	if window <= 0 {
+		window = defaultLoginWindow
+	}
+	return limit, window
+}
 
 type Deps struct {
 	List           ListUseCase
@@ -30,6 +41,11 @@ type Deps struct {
 
 	// Catalog liga as rotas /v1/admin/products (exigem Login configurado).
 	Catalog *AdminCatalog
+
+	// Orders liga as rotas públicas /v1/orders. Limite por IP (padrão 10 por minuto, cada rota com a sua cota).
+	Orders      *Orders
+	OrderLimit  int
+	OrderWindow time.Duration
 }
 
 func NewRouter(d Deps) nethttp.Handler {
@@ -57,6 +73,13 @@ func NewRouter(d Deps) nethttp.Handler {
 	v1.GET("/products", h.List)
 	v1.GET("/products/:slug", h.Get)
 
+	if d.Orders != nil {
+		oh := ordersHandler{Orders: *d.Orders}
+		limit, window := withDefaults(d.OrderLimit, d.OrderWindow, defaultOrderLimit)
+		v1.POST("/orders", rateLimit(newRateLimiter(limit, window, time.Now)), oh.PlaceOrder)
+		v1.POST("/orders/lookup", rateLimit(newRateLimiter(limit, window, time.Now)), oh.LookupOrder)
+	}
+
 	if d.Login != nil {
 		registerAdmin(v1.Group("/admin"), d)
 	}
@@ -64,13 +87,7 @@ func NewRouter(d Deps) nethttp.Handler {
 }
 
 func registerAdmin(g *gin.RouterGroup, d Deps) {
-	limit, window := d.LoginLimit, d.LoginWindow
-	if limit <= 0 {
-		limit = defaultLoginLimit
-	}
-	if window <= 0 {
-		window = defaultLoginWindow
-	}
+	limit, window := withDefaults(d.LoginLimit, d.LoginWindow, defaultLoginLimit)
 
 	a := adminHandler{login: d.Login, tokens: d.Tokens, cookieSecure: d.CookieSecure, now: time.Now}
 	g.POST("/login", rateLimit(newRateLimiter(limit, window, time.Now)), a.Login)
