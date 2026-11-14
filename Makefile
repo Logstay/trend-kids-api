@@ -22,3 +22,12 @@ run:
 
 seed:
 	@psql "$(DB_URL)" -v ON_ERROR_STOP=1 -q -f config/seed/dev.sql
+
+# Cria o dono do painel. Uso: make admin EMAIL=voce@email.com
+# A senha NÃO vai na linha de comando (apareceria no histórico do shell): é pedida no terminal, sem eco.
+# Mínimo de 12 caracteres. Para scripts, dá para passar ADMIN_PASSWORD no ambiente.
+.PHONY: admin
+admin:
+	@test -n "$(EMAIL)" || { echo "Informe o e-mail: make admin EMAIL=voce@email.com"; exit 1; }
+	@test -f .env || { echo "Falta o arquivo .env (copie o .env.example)"; exit 1; }
+	@set -a; . ./.env; set +a; go run ./cmd/createadmin -email "$(EMAIL)"
