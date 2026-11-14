@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"log/slog"
 	nethttp "net/http"
 	"time"
 
@@ -23,7 +24,7 @@ import (
 )
 
 // NewHandler liga repositórios, casos de uso e HTTP. É o único lugar que conhece todas as camadas.
-func NewHandler(db *sqlx.DB, cfg *config.Config) (nethttp.Handler, error) {
+func NewHandler(db *sqlx.DB, cfg *config.Config, logger *slog.Logger) (nethttp.Handler, error) {
 	tokens, err := security.NewTokenService(cfg.JWTSecret, cfg.SessionTTL, time.Now)
 	if err != nil {
 		return nil, err
@@ -45,6 +46,7 @@ func NewHandler(db *sqlx.DB, cfg *config.Config) (nethttp.Handler, error) {
 		},
 		Get:            catalogqueries.GetHandler{Repository: catalogRepo},
 		AllowedOrigins: cfg.AllowedOrigins,
+		Logger:         logger,
 		TrustedProxies: cfg.TrustedProxies,
 		Settings: &apphttp.SettingsRoutes{
 			Get:    settingsqueries.GetHandler{Repository: settingsRepo},

@@ -3,8 +3,9 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	nethttp "net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -18,18 +19,23 @@ import (
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("config: %v", err)
+		fatal("config", err)
 	}
+	logger, err := config.NewLogger(cfg.LogLevel, cfg.LogFormat)
+	if err != nil {
+		fatal("log", err)
+	}
+	slog.SetDefault(logger)
 
 	db, err := sqlx.Connect("postgres", cfg.DatabaseURL)
 	if err != nil {
-		log.Fatalf("banco: %v", err)
+		fatal("banco", err)
 	}
 	defer db.Close()
 
-	handler, err := internal.NewHandler(db, cfg)
+	handler, err := internal.NewHandler(db, cfg, logger)
 	if err != nil {
-		log.Fatalf("setup: %v", err)
+		fatal("setup", err)
 	}
 
 	srv := &nethttp.Server{
@@ -42,9 +48,11 @@ func main() {
 	defer stop()
 
 	go func() {
-		log.Printf("API ouvindo em %s", srv.Addr)
+		// Configuração efetiva, sem segredos: ajuda a achar o 403 de CORS (origem do site fora da lista).
+		logger.Info("API no ar", "addr", srv.Addr, "cors_origins", cfg.AllowedOrigins, "trusted_proxies", cfg.TrustedProxies,
+			"cookie_secure", cfg.CookieSecure, "shipping_flat_cents", cfg.ShippingFlatCents, "shipping_free_above_cents", cfg.ShippingFreeAboveCents)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, nethttp.ErrServerClosed) {
-			log.Fatalf("servidor: %v", err)
+			fatal("servidor", err)
 		}
 	}()
 
@@ -52,6 +60,12 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("shutdown: %v", err)
+		logger.Error("shutdown", "err", err)
 	}
+	logger.Info("API encerrada")
+}
+
+func fatal(what string, err error) {
+	slog.Error("falha ao iniciar", "etapa", what, "err", err)
+	os.Exit(1)
 }

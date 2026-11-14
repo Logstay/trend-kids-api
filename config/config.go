@@ -22,6 +22,9 @@ type Config struct {
 	ShippingFlatCents      int64 `env:"SHIPPING_FLAT_CENTS" envDefault:"0"`
 	ShippingFreeAboveCents int64 `env:"SHIPPING_FREE_ABOVE_CENTS" envDefault:"0"`
 
+	LogLevel  string `env:"LOG_LEVEL" envDefault:"info"`  // debug, info, warn, error
+	LogFormat string `env:"LOG_FORMAT" envDefault:"text"` // text (terminal) ou json (produção)
+
 	// IPs/CIDRs do proxy na frente da API (o servidor Next). Só deles o X-Forwarded-For é aceito.
 	TrustedProxies []string `env:"TRUSTED_PROXIES" envSeparator:","`
 }

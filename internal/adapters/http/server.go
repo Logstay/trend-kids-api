@@ -1,6 +1,7 @@
 package http
 
 import (
+	"log/slog"
 	nethttp "net/http"
 	"time"
 
@@ -28,6 +29,8 @@ type Deps struct {
 	List           ListUseCase
 	Get            GetUseCase
 	AllowedOrigins []string
+	// Logger registra cada requisição (uma linha). nil = sem log.
+	Logger *slog.Logger
 	// TrustedProxies: IPs/CIDRs cujo X-Forwarded-For é aceito (o servidor Next, quando ele fica na frente).
 	// Vazio = ninguém: o IP do cliente é sempre o da conexão.
 	TrustedProxies []string
@@ -64,6 +67,7 @@ func NewRouter(d Deps) nethttp.Handler {
 	if len(d.TrustedProxies) > 0 {
 		_ = r.SetTrustedProxies(d.TrustedProxies)
 	}
+	r.Use(requestLogger(d.Logger))
 	r.Use(gin.Recovery())
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     d.AllowedOrigins,
