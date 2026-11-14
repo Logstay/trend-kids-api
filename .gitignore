@@ -1,3 +1,6 @@
 .env
 *.out
 /bin/
+
+# binários do depurador (VS Code/Delve): nunca versionar
+__debug_bin*
