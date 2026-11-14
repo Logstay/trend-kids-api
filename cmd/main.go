@@ -27,9 +27,14 @@ func main() {
 	}
 	defer db.Close()
 
+	handler, err := internal.NewHandler(db, cfg)
+	if err != nil {
+		log.Fatalf("setup: %v", err)
+	}
+
 	srv := &nethttp.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           internal.NewHandler(db, cfg.AllowedOrigins),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

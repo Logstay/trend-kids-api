@@ -26,3 +26,13 @@ type BadRequestError string
 
 func (e BadRequestError) Error() string   { return string(e) }
 func (e BadRequestError) StatusCode() int { return http.StatusBadRequest }
+
+type UnauthorizedError string
+
+func (e UnauthorizedError) Error() string   { return string(e) }
+func (e UnauthorizedError) StatusCode() int { return http.StatusUnauthorized }
+
+type TooManyRequestsError string
+
+func (e TooManyRequestsError) Error() string   { return string(e) }
+func (e TooManyRequestsError) StatusCode() int { return http.StatusTooManyRequests }

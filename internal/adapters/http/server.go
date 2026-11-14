@@ -2,25 +2,42 @@ package http
 
 import (
 	nethttp "net/http"
+	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+)
+
+const (
+	defaultLoginLimit  = 5
+	defaultLoginWindow = time.Minute
 )
 
 type Deps struct {
 	List           ListUseCase
 	Get            GetUseCase
 	AllowedOrigins []string
+
+	// Admin: as rotas /v1/admin só existem quando Login está definido.
+	Login        LoginUseCase
+	Tokens       TokenParser
+	CookieSecure bool
+	LoginLimit   int
+	LoginWindow  time.Duration
 }
 
 func NewRouter(d Deps) nethttp.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
+	// Sem proxies confiáveis: ClientIP usa o endereço real da conexão e ignora X-Forwarded-For,
+	// que um atacante forjaria para escapar do limite de tentativas.
+	_ = r.SetTrustedProxies(nil)
 	r.Use(gin.Recovery())
 	r.Use(cors.New(cors.Config{
-		AllowOrigins: d.AllowedOrigins,
-		AllowMethods: []string{nethttp.MethodGet, nethttp.MethodOptions},
-		AllowHeaders: []string{"Content-Type"},
+		AllowOrigins:     d.AllowedOrigins,
+		AllowMethods:     []string{nethttp.MethodGet, nethttp.MethodPost, nethttp.MethodPut, nethttp.MethodPatch, nethttp.MethodDelete, nethttp.MethodOptions},
+		AllowHeaders:     []string{"Content-Type"},
+		AllowCredentials: true,
 	}))
 
 	r.GET("/health", func(c *gin.Context) { c.JSON(nethttp.StatusOK, gin.H{"status": "ok"}) })
@@ -30,5 +47,23 @@ func NewRouter(d Deps) nethttp.Handler {
 	v1.GET("/products", h.List)
 	v1.GET("/products/:slug", h.Get)
 
+	if d.Login != nil {
+		registerAdmin(v1.Group("/admin"), d)
+	}
 	return r
+}
+
+func registerAdmin(g *gin.RouterGroup, d Deps) {
+	limit, window := d.LoginLimit, d.LoginWindow
+	if limit <= 0 {
+		limit = defaultLoginLimit
+	}
+	if window <= 0 {
+		window = defaultLoginWindow
+	}
+
+	a := adminHandler{login: d.Login, tokens: d.Tokens, cookieSecure: d.CookieSecure, now: time.Now}
+	g.POST("/login", rateLimit(newRateLimiter(limit, window, time.Now)), a.Login)
+	g.POST("/logout", a.Logout)
+	g.GET("/me", a.RequireAdmin, a.Me)
 }
