@@ -1,0 +1,21 @@
+name: trendkids
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: trendkids-postgres
+    environment:
+      POSTGRES_USER: trendkids
+      POSTGRES_PASSWORD: trendkids
+      POSTGRES_DB: trendkids
+    ports:
+      - "5433:5432"
+    volumes:
+      - trendkids-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trendkids"]
+      interval: 3s
+      retries: 10
+
+volumes:
+  trendkids-pgdata:
