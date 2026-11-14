@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+	"net"
 	"time"
 
 	"github.com/caarlos0/env/v11"
@@ -15,12 +17,22 @@ type Config struct {
 	JWTSecret    string        `env:"JWT_SECRET,required"`
 	SessionTTL   time.Duration `env:"SESSION_TTL" envDefault:"12h"`
 	CookieSecure bool          `env:"COOKIE_SECURE" envDefault:"true"`
+
+	// IPs/CIDRs do proxy na frente da API (o servidor Next). Só deles o X-Forwarded-For é aceito.
+	TrustedProxies []string `env:"TRUSTED_PROXIES" envSeparator:","`
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{}
 	if err := env.Parse(cfg); err != nil {
 		return nil, err
+	}
+	for _, p := range cfg.TrustedProxies {
+		if net.ParseIP(p) == nil {
+			if _, _, err := net.ParseCIDR(p); err != nil {
+				return nil, fmt.Errorf("TRUSTED_PROXIES inválido: %q", p)
+			}
+		}
 	}
 	return cfg, nil
 }

@@ -35,6 +35,7 @@ func NewHandler(db *sqlx.DB, cfg *config.Config) (nethttp.Handler, error) {
 		},
 		Get:            catalogqueries.GetHandler{Repository: catalogRepo},
 		AllowedOrigins: cfg.AllowedOrigins,
+		TrustedProxies: cfg.TrustedProxies,
 		Login:          identitycommands.LoginHandler{Repository: adminRepo, Hasher: security.NewArgon2Hasher(), Tokens: tokens},
 		Tokens:         tokens,
 		CookieSecure:   cfg.CookieSecure,

@@ -17,6 +17,9 @@ type Deps struct {
 	List           ListUseCase
 	Get            GetUseCase
 	AllowedOrigins []string
+	// TrustedProxies: IPs/CIDRs cujo X-Forwarded-For é aceito (o servidor Next, quando ele fica na frente).
+	// Vazio = ninguém: o IP do cliente é sempre o da conexão.
+	TrustedProxies []string
 
 	// Admin: as rotas /v1/admin só existem quando Login está definido.
 	Login        LoginUseCase
@@ -32,9 +35,13 @@ type Deps struct {
 func NewRouter(d Deps) nethttp.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	// Sem proxies confiáveis: ClientIP usa o endereço real da conexão e ignora X-Forwarded-For,
-	// que um atacante forjaria para escapar do limite de tentativas.
+	// Por padrão ninguém é confiável: ClientIP usa o endereço real da conexão e ignora X-Forwarded-For,
+	// que um atacante forjaria para escapar do limite de tentativas. Só os proxies listados valem.
+	// (Se a lista for inválida o Gin mantém "ninguém": falha para o lado seguro; config.Load já valida.)
 	_ = r.SetTrustedProxies(nil)
+	if len(d.TrustedProxies) > 0 {
+		_ = r.SetTrustedProxies(d.TrustedProxies)
+	}
 	r.Use(gin.Recovery())
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     d.AllowedOrigins,

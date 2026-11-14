@@ -28,6 +28,11 @@ type adminEnv struct {
 
 func newAdminServer(t *testing.T, loginLimit int) adminEnv {
 	t.Helper()
+	return newAdminServerBehind(t, loginLimit, nil)
+}
+
+func newAdminServerBehind(t *testing.T, loginLimit int, trustedProxies []string) adminEnv {
+	t.Helper()
 	repo := &identitytest.Repo{}
 	hasher := security.NewArgon2Hasher()
 	tokens, err := security.NewTokenService("0123456789abcdef0123456789abcdef", time.Hour, time.Now)
@@ -42,6 +47,7 @@ func newAdminServer(t *testing.T, loginLimit int) adminEnv {
 		CookieSecure:   true,
 		LoginLimit:     loginLimit,
 		LoginWindow:    time.Minute,
+		TrustedProxies: trustedProxies,
 	})
 	return adminEnv{handler: h, tokens: tokens, adminID: repo.Admins[0].UID()}
 }
@@ -190,4 +196,32 @@ func TestCORS_AllowsCredentialsForConfiguredOrigin(t *testing.T) {
 
 	assert.Equal(t, "true", rec.Header().Get("Access-Control-Allow-Credentials"))
 	assert.Equal(t, "http://localhost:3000", rec.Header().Get("Access-Control-Allow-Origin"))
+}
+
+// Atrás do Next (proxy): sem isso todo login pareceria vir de um IP só e um atacante travaria o dono.
+func TestLogin_RateLimitUsesForwardedForOnlyFromTrustedProxy(t *testing.T) {
+	e := newAdminServerBehind(t, 2, []string{"10.0.0.1"}) // post() usa RemoteAddr 10.0.0.1
+	bad := loginBody("dono@trendkids.com.br", "senha-errada-123")
+	as := func(ip string) func(*nethttp.Request) {
+		return func(r *nethttp.Request) { r.Header.Set("X-Forwarded-For", ip) }
+	}
+
+	post(e.handler, "/v1/admin/login", bad, as("5.5.5.5"))
+	post(e.handler, "/v1/admin/login", bad, as("5.5.5.5"))
+
+	assert.Equal(t, 429, post(e.handler, "/v1/admin/login", bad, as("5.5.5.5")).Code, "o atacante é limitado")
+	assert.Equal(t, 401, post(e.handler, "/v1/admin/login", bad, as("6.6.6.6")).Code, "o dono, de outro IP, não é afetado")
+}
+
+func TestLogin_ForwardedForFromUntrustedPeerStillIgnored(t *testing.T) {
+	e := newAdminServerBehind(t, 2, []string{"10.0.0.1"})
+	bad := loginBody("dono@trendkids.com.br", "senha-errada-123")
+	direct := func(ip string) func(*nethttp.Request) {
+		return func(r *nethttp.Request) { r.RemoteAddr = "9.9.9.9:1"; r.Header.Set("X-Forwarded-For", ip) }
+	}
+
+	post(e.handler, "/v1/admin/login", bad, direct("1.1.1.1"))
+	post(e.handler, "/v1/admin/login", bad, direct("2.2.2.2"))
+
+	assert.Equal(t, 429, post(e.handler, "/v1/admin/login", bad, direct("3.3.3.3")).Code)
 }
