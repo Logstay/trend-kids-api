@@ -13,6 +13,7 @@ import (
 	pgsellers "github.com/Logstay/trend-kids-api/internal/adapters/postgres/sellers"
 	pgsettings "github.com/Logstay/trend-kids-api/internal/adapters/postgres/settings"
 	"github.com/Logstay/trend-kids-api/internal/adapters/security"
+	"github.com/Logstay/trend-kids-api/internal/adapters/storage/local"
 	catalogcommands "github.com/Logstay/trend-kids-api/internal/application/catalog/commands"
 	catalogqueries "github.com/Logstay/trend-kids-api/internal/application/catalog/queries"
 	identitycommands "github.com/Logstay/trend-kids-api/internal/application/identity/commands"
@@ -34,6 +35,10 @@ func NewHandler(db *sqlx.DB, cfg *config.Config, logger *slog.Logger) (nethttp.H
 	}
 
 	catalogRepo := pgcatalog.NewRepository(db)
+	images, err := local.New(cfg.UploadDir)
+	if err != nil {
+		return nil, err
+	}
 	adminRepo := pgidentity.NewRepository(db)
 	orderRepo := pgorders.NewRepository(db)
 	settingsRepo := pgsettings.NewRepository(db)
@@ -47,10 +52,14 @@ func NewHandler(db *sqlx.DB, cfg *config.Config, logger *slog.Logger) (nethttp.H
 			Create:      catalogcommands.SaveHandler{Repository: catalogRepo},
 			Update:      catalogcommands.UpdateHandler{Repository: catalogRepo},
 			AdjustStock: catalogcommands.AdjustStockHandler{Repository: catalogRepo},
+			SetImage:    catalogcommands.SetImageHandler{Products: catalogRepo, Storage: images},
+			RemoveImage: catalogcommands.RemoveImageHandler{Products: catalogRepo, Storage: images},
 		},
 		Get:            catalogqueries.GetHandler{Repository: catalogRepo},
 		AllowedOrigins: cfg.AllowedOrigins,
 		Logger:         logger,
+		Images:         images,
+		UploadsDir:     images.Dir(),
 		TrustedProxies: cfg.TrustedProxies,
 		Sellers: &apphttp.SellersRoutes{
 			List:   sellerqueries.ListHandler{Repository: sellerRepo},

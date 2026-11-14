@@ -26,6 +26,8 @@ type Product interface {
 	PriceCents() int64
 	Stock() int
 	Active() bool
+	// Image é a chave do arquivo da foto principal (vazio = sem foto). A URL é montada pelo armazenamento.
+	Image() string
 	CreatedAt() time.Time
 	UpdatedAt() time.Time
 }
@@ -39,6 +41,7 @@ type product struct {
 	priceCents  int64
 	stock       int
 	active      bool
+	image       string
 	createdAt   time.Time
 	updatedAt   time.Time
 }
@@ -53,3 +56,5 @@ func (p *product) Stock() int           { return p.stock }
 func (p *product) Active() bool         { return p.active }
 func (p *product) CreatedAt() time.Time { return p.createdAt }
 func (p *product) UpdatedAt() time.Time { return p.updatedAt }
+
+func (p *product) Image() string { return p.image }

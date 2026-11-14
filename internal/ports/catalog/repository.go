@@ -44,6 +44,9 @@ type Repository interface {
 	// AdjustStock soma delta ao estoque de forma atômica e registra a movimentação.
 	// Devolve o novo estoque; httperr.ConflictError se o saldo ficaria negativo.
 	AdjustStock(ctx context.Context, m StockMovement) (newStock int, err error)
+	// SetImage troca a foto (key vazia remove) e devolve a chave ANTERIOR, para o arquivo velho ser apagado.
+	// Devolve httperr.NotFoundError se o produto não existir.
+	SetImage(ctx context.Context, uid, key string) (previous string, err error)
 }
 
 type StockMovement struct {

@@ -80,3 +80,18 @@ func (r *Repo) AdjustStock(ctx context.Context, m ports.StockMovement) (int, err
 	r.Movements = append(r.Movements, m)
 	return p.Stock() + m.Delta, nil
 }
+
+func (r *Repo) SetImage(_ context.Context, uid, key string) (string, error) {
+	for i, p := range r.Products {
+		if p.UID() == uid {
+			prev := p.Image()
+			snap := catalog.Snapshot{
+				UID: p.UID(), Name: p.Name(), Slug: p.Slug(), Category: string(p.Category()), Description: p.Description(),
+				PriceCents: p.PriceCents(), Stock: p.Stock(), Active: p.Active(), Image: key, CreatedAt: p.CreatedAt(), UpdatedAt: p.UpdatedAt(),
+			}
+			r.Products[i] = catalog.Restore(snap)
+			return prev, r.Err
+		}
+	}
+	return "", httperr.NotFoundError("produto não encontrado")
+}

@@ -22,6 +22,9 @@ type Config struct {
 	ShippingFlatCents      int64 `env:"SHIPPING_FLAT_CENTS" envDefault:"0"`
 	ShippingFreeAboveCents int64 `env:"SHIPPING_FREE_ABOVE_CENTS" envDefault:"0"`
 
+	// Pasta das fotos dos produtos. EM PRODUÇÃO precisa ser um volume persistente (ou trocar o armazenamento por S3/R2).
+	UploadDir string `env:"UPLOAD_DIR" envDefault:"./uploads"`
+
 	LogLevel  string `env:"LOG_LEVEL" envDefault:"info"`  // debug, info, warn, error
 	LogFormat string `env:"LOG_FORMAT" envDefault:"text"` // text (terminal) ou json (produção)
 

@@ -4,3 +4,6 @@
 
 # binários do depurador (VS Code/Delve): nunca versionar
 __debug_bin*
+
+# fotos enviadas pelo painel (em produção: volume persistente)
+/uploads/

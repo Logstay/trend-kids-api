@@ -50,7 +50,7 @@ func main() {
 	go func() {
 		// Configuração efetiva, sem segredos: ajuda a achar o 403 de CORS (origem do site fora da lista).
 		logger.Info("API no ar", "addr", srv.Addr, "cors_origins", cfg.AllowedOrigins, "trusted_proxies", cfg.TrustedProxies,
-			"cookie_secure", cfg.CookieSecure, "shipping_flat_cents", cfg.ShippingFlatCents, "shipping_free_above_cents", cfg.ShippingFreeAboveCents)
+			"upload_dir", cfg.UploadDir, "cookie_secure", cfg.CookieSecure, "shipping_flat_cents", cfg.ShippingFlatCents, "shipping_free_above_cents", cfg.ShippingFreeAboveCents)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, nethttp.ErrServerClosed) {
 			fatal("servidor", err)
 		}

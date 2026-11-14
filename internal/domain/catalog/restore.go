@@ -12,6 +12,7 @@ type Snapshot struct {
 	PriceCents  int64
 	Stock       int
 	Active      bool
+	Image       string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
@@ -21,6 +22,6 @@ func Restore(s Snapshot) Product {
 	return &product{
 		uid: s.UID, name: s.Name, slug: s.Slug, category: Category(s.Category),
 		description: s.Description, priceCents: s.PriceCents, stock: s.Stock,
-		active: s.Active, createdAt: s.CreatedAt, updatedAt: s.UpdatedAt,
+		active: s.Active, image: s.Image, createdAt: s.CreatedAt, updatedAt: s.UpdatedAt,
 	}
 }

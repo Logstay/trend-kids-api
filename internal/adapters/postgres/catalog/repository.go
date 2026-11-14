@@ -30,6 +30,7 @@ type row struct {
 	PriceCents  int64     `db:"price_cents"`
 	Stock       int       `db:"stock"`
 	Active      bool      `db:"active"`
+	Image       string    `db:"image_key"`
 	CreatedAt   time.Time `db:"created_at"`
 	UpdatedAt   time.Time `db:"updated_at"`
 }
@@ -37,11 +38,11 @@ type row struct {
 func (r row) product() catalog.Product {
 	return catalog.Restore(catalog.Snapshot{
 		UID: r.UID, Name: r.Name, Slug: r.Slug, Category: r.Category, Description: r.Description,
-		PriceCents: r.PriceCents, Stock: r.Stock, Active: r.Active, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		PriceCents: r.PriceCents, Stock: r.Stock, Active: r.Active, Image: r.Image, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	})
 }
 
-const columns = `uid, name, slug, category, description, price_cents, stock, active, created_at, updated_at`
+const columns = `uid, name, slug, category, description, price_cents, stock, active, image_key, created_at, updated_at`
 
 const initialStockReason = "estoque inicial"
 
@@ -125,6 +126,24 @@ func insertMovement(ctx context.Context, tx *sqlx.Tx, m ports.StockMovement) err
 		INSERT INTO stock_movements (product_uid, delta, reason, admin_uid)
 		VALUES ($1, $2, $3, NULLIF($4, '')::uuid)`, m.ProductUID, m.Delta, m.Reason, m.AdminUID)
 	return err
+}
+
+// SetImage troca a chave da foto e devolve a anterior. A linha é travada (FOR UPDATE) para duas trocas
+// simultâneas não devolverem a mesma "anterior" (o que deixaria um arquivo órfão no disco).
+func (r *Repository) SetImage(ctx context.Context, uid, key string) (string, error) {
+	if _, err := uuid.Parse(uid); err != nil {
+		return "", errProductNotFound
+	}
+	var previous string
+	err := r.db.GetContext(ctx, &previous, `
+		WITH old AS (SELECT image_key FROM products WHERE uid = $1 FOR UPDATE)
+		UPDATE products SET image_key = $2, updated_at = now()
+		  FROM old WHERE products.uid = $1
+		RETURNING old.image_key`, uid, key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", errProductNotFound
+	}
+	return previous, err
 }
 
 func (r *Repository) inTx(ctx context.Context, fn func(*sqlx.Tx) error) error {

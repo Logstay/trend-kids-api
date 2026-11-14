@@ -48,6 +48,10 @@ type Deps struct {
 	// AdminOrders liga as rotas /v1/admin/orders (exigem Login configurado).
 	AdminOrders *AdminOrders
 
+	// Images monta as URLs das fotos; UploadsDir é a pasta de onde GET /uploads/:key serve os arquivos (vazio = não serve).
+	Images     ImageURLer
+	UploadsDir string
+
 	// Sellers liga GET /v1/sellers (público) e o CRUD em /v1/admin/sellers (exige Login configurado).
 	Sellers *SellersRoutes
 
@@ -79,9 +83,14 @@ func NewRouter(d Deps) nethttp.Handler {
 		AllowCredentials: true,
 	}))
 
+	r.MaxMultipartMemory = 8 << 20
+	if d.UploadsDir != "" {
+		r.GET("/uploads/:key", serveUpload(d.UploadsDir))
+	}
+
 	r.GET("/health", func(c *gin.Context) { c.JSON(nethttp.StatusOK, gin.H{"status": "ok"}) })
 
-	h := catalogHandler{list: d.List, get: d.Get}
+	h := catalogHandler{list: d.List, get: d.Get, url: imageURLs(d.Images)}
 	v1 := r.Group("/v1")
 	v1.GET("/products", h.List)
 	v1.GET("/products/:slug", h.Get)
@@ -116,12 +125,18 @@ func registerAdmin(g *gin.RouterGroup, d Deps) {
 	g.GET("/me", a.RequireAdmin, a.Me)
 
 	if d.Catalog != nil {
-		ch := adminCatalogHandler{AdminCatalog: *d.Catalog}
+		ch := adminCatalogHandler{AdminCatalog: *d.Catalog, url: imageURLs(d.Images)}
 		products := g.Group("/products", a.RequireAdmin)
 		products.GET("", ch.List)
 		products.POST("", ch.Create)
 		products.PUT("/:uid", ch.Update)
 		products.PATCH("/:uid/stock", ch.AdjustStock)
+		if d.Catalog.SetImage != nil {
+			products.POST("/:uid/image", ch.UploadImage)
+		}
+		if d.Catalog.RemoveImage != nil {
+			products.DELETE("/:uid/image", ch.RemoveImage)
+		}
 	}
 
 	if d.Sellers != nil {

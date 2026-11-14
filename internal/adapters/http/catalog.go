@@ -22,6 +22,7 @@ type GetUseCase interface {
 type catalogHandler struct {
 	list ListUseCase
 	get  GetUseCase
+	url  urlFunc
 }
 
 func (h catalogHandler) List(c *gin.Context) {
@@ -39,7 +40,7 @@ func (h catalogHandler) List(c *gin.Context) {
 
 	items := make([]ProductResponse, 0, len(products))
 	for _, p := range products {
-		items = append(items, toResponse(p))
+		items = append(items, toResponse(p, h.url))
 	}
 	c.JSON(nethttp.StatusOK, ListResponse{Items: items})
 }
@@ -50,7 +51,7 @@ func (h catalogHandler) Get(c *gin.Context) {
 		httperr.ErrorHandler(err, c)
 		return
 	}
-	c.JSON(nethttp.StatusOK, toResponse(p))
+	c.JSON(nethttp.StatusOK, toResponse(p, h.url))
 }
 
 func parseFilter(c *gin.Context) (f ports.Filter, err error) {

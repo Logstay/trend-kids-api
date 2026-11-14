@@ -40,7 +40,7 @@ func newEnv(t *testing.T) env {
 
 	_, err = db.Exec(`DROP TABLE IF EXISTS order_events, order_items, orders, stock_movements, products`)
 	require.NoError(t, err)
-	for _, f := range []string{"V1__create_products.sql", "V3__create_stock_movements.sql", "V4__create_orders.sql", "V5__create_order_events.sql"} {
+	for _, f := range []string{"V1__create_products.sql", "V3__create_stock_movements.sql", "V4__create_orders.sql", "V5__create_order_events.sql", "V8__add_product_image.sql"} {
 		sqlText, err := os.ReadFile("../../../../config/migrations/" + f)
 		require.NoError(t, err)
 		_, err = db.Exec(string(sqlText))

@@ -52,3 +52,17 @@ func TestFactoryFrom_StillValidates(t *testing.T) {
 	assert.Error(t, f.PriceCents(0))
 	assert.Error(t, f.Name(" "))
 }
+
+func TestProductImage_NewProductHasNoneAndEditingKeepsIt(t *testing.T) {
+	assert.Empty(t, existing(t).Image(), "produto novo nasce sem foto")
+
+	withPhoto := catalog.Restore(catalog.Snapshot{
+		UID: "u1", Name: "Classic Clog Rosa", Slug: "classic-clog-rosa", Category: "Classic", PriceCents: 18990,
+		Image: "3f2b8c1e-5d4a-4b6f-9a1c-0e7d2f8b6a31.webp",
+	})
+	assert.Equal(t, "3f2b8c1e-5d4a-4b6f-9a1c-0e7d2f8b6a31.webp", withPhoto.Image())
+
+	f := catalog.NewProductFactoryFrom(withPhoto)
+	require.NoError(t, f.PriceCents(15990))
+	assert.Equal(t, withPhoto.Image(), f.Build().Image(), "editar o preço não perde a foto")
+}
