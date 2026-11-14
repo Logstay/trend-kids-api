@@ -42,6 +42,11 @@ func NewHandler(db *sqlx.DB, cfg *config.Config) (nethttp.Handler, error) {
 		Get:            catalogqueries.GetHandler{Repository: catalogRepo},
 		AllowedOrigins: cfg.AllowedOrigins,
 		TrustedProxies: cfg.TrustedProxies,
+		AdminOrders: &apphttp.AdminOrders{
+			List:         orderqueries.AdminListHandler{Orders: orderRepo},
+			Get:          orderqueries.AdminGetHandler{Orders: orderRepo},
+			ChangeStatus: ordercommands.ChangeStatusHandler{Orders: orderRepo},
+		},
 		Orders: &apphttp.Orders{
 			Place:  ordercommands.PlaceHandler{Orders: orderRepo, Products: catalogRepo, Shipping: shipping},
 			Lookup: orderqueries.LookupHandler{Orders: orderRepo},

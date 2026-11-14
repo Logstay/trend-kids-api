@@ -42,6 +42,9 @@ type Deps struct {
 	// Catalog liga as rotas /v1/admin/products (exigem Login configurado).
 	Catalog *AdminCatalog
 
+	// AdminOrders liga as rotas /v1/admin/orders (exigem Login configurado).
+	AdminOrders *AdminOrders
+
 	// Orders liga as rotas públicas /v1/orders. Limite por IP (padrão 10 por minuto, cada rota com a sua cota).
 	Orders      *Orders
 	OrderLimit  int
@@ -101,5 +104,13 @@ func registerAdmin(g *gin.RouterGroup, d Deps) {
 		products.POST("", ch.Create)
 		products.PUT("/:uid", ch.Update)
 		products.PATCH("/:uid/stock", ch.AdjustStock)
+	}
+
+	if d.AdminOrders != nil {
+		oh := adminOrdersHandler{AdminOrders: *d.AdminOrders}
+		ord := g.Group("/orders", a.RequireAdmin)
+		ord.GET("", oh.List)
+		ord.GET("/:code", oh.Get)
+		ord.PATCH("/:code/status", oh.ChangeStatus)
 	}
 }

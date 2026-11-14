@@ -34,6 +34,10 @@ func (r *Repository) Create(ctx context.Context, o orders.Order) error {
 		if err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO order_events (order_uid, from_status, to_status) VALUES ($1, NULL, $2)`, o.UID(), string(o.Status())); err != nil {
+			return err
+		}
 
 		items := o.Items()
 		for _, it := range items { // na ordem do carrinho, para a exibição bater com o que a pessoa montou
@@ -99,6 +103,15 @@ type itemRow struct {
 	Quantity       int    `db:"quantity"`
 }
 
+func (row orderRow) order(items []orders.Item) orders.Order {
+	return orders.Restore(orders.Snapshot{
+		UID: row.UID, Code: row.Code, CustomerName: row.CustomerName, Phone: row.CustomerPhone,
+		Neighborhood: row.Neighborhood, Status: orders.Status(row.Status), Items: items,
+		SubtotalCents: row.SubtotalCents, ShippingCents: row.ShippingCents, TotalCents: row.TotalCents,
+		CreatedAt: row.CreatedAt,
+	})
+}
+
 func (r *Repository) GetByCode(ctx context.Context, code string) (orders.Order, error) {
 	var row orderRow
 	err := r.db.GetContext(ctx, &row, `
@@ -112,22 +125,154 @@ func (r *Repository) GetByCode(ctx context.Context, code string) (orders.Order, 
 		return nil, err
 	}
 
-	var rows []itemRow
-	if err := r.db.SelectContext(ctx, &rows,
-		`SELECT product_uid::text, name_snapshot, unit_price_cents, quantity FROM order_items WHERE order_uid = $1 ORDER BY id`, row.UID); err != nil {
+	itemsByOrder, err := r.itemsFor(ctx, []string{row.UID})
+	if err != nil {
 		return nil, err
 	}
-	items := make([]orders.Item, 0, len(rows))
+	items := itemsByOrder[row.UID]
+
+	return row.order(items), nil
+}
+
+type orderItemRow struct {
+	OrderUID string `db:"order_uid"`
+	itemRow
+}
+
+// itemsFor carrega os itens de vários pedidos de uma vez (sem N+1), na ordem do carrinho.
+func (r *Repository) itemsFor(ctx context.Context, orderUIDs []string) (map[string][]orders.Item, error) {
+	out := make(map[string][]orders.Item, len(orderUIDs))
+	if len(orderUIDs) == 0 {
+		return out, nil
+	}
+	var rows []orderItemRow
+	if err := r.db.SelectContext(ctx, &rows, `
+		SELECT order_uid::text AS order_uid, product_uid::text AS product_uid, name_snapshot, unit_price_cents, quantity
+		  FROM order_items WHERE order_uid = ANY($1::uuid[]) ORDER BY id`, pq.Array(orderUIDs)); err != nil {
+		return nil, err
+	}
 	for _, it := range rows {
-		items = append(items, orders.Item{ProductUID: it.ProductUID, Name: it.Name, UnitPriceCents: it.UnitPriceCents, Quantity: it.Quantity})
+		out[it.OrderUID] = append(out[it.OrderUID], orders.Item{
+			ProductUID: it.ProductUID, Name: it.Name, UnitPriceCents: it.UnitPriceCents, Quantity: it.Quantity,
+		})
+	}
+	return out, nil
+}
+
+func (r *Repository) List(ctx context.Context, f ports.ListFilter) ([]orders.Order, error) {
+	var rows []orderRow
+	err := r.db.SelectContext(ctx, &rows, `
+		SELECT uid, code, customer_name, customer_phone, neighborhood, status,
+		       subtotal_cents, shipping_cents, total_cents, created_at
+		  FROM orders
+		 WHERE ($1 = '' OR status = $1)
+		 ORDER BY created_at DESC, id DESC
+		 LIMIT $2 OFFSET $3`, f.Status, f.Limit, f.Offset)
+	if err != nil {
+		return nil, err
 	}
 
-	return orders.Restore(orders.Snapshot{
-		UID: row.UID, Code: row.Code, CustomerName: row.CustomerName, Phone: row.CustomerPhone,
-		Neighborhood: row.Neighborhood, Status: orders.Status(row.Status), Items: items,
-		SubtotalCents: row.SubtotalCents, ShippingCents: row.ShippingCents, TotalCents: row.TotalCents,
-		CreatedAt: row.CreatedAt,
-	}), nil
+	uids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		uids = append(uids, row.UID)
+	}
+	items, err := r.itemsFor(ctx, uids)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]orders.Order, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, row.order(items[row.UID]))
+	}
+	return result, nil
+}
+
+func (r *Repository) Events(ctx context.Context, orderUID string) ([]ports.StatusEvent, error) {
+	var rows []struct {
+		From  sql.NullString `db:"from_status"`
+		To    string         `db:"to_status"`
+		Admin sql.NullString `db:"admin_uid"`
+		At    time.Time      `db:"created_at"`
+	}
+	if err := r.db.SelectContext(ctx, &rows, `
+		SELECT from_status, to_status, admin_uid::text AS admin_uid, created_at
+		  FROM order_events WHERE order_uid = $1 ORDER BY id`, orderUID); err != nil {
+		return nil, err
+	}
+	events := make([]ports.StatusEvent, 0, len(rows))
+	for _, row := range rows {
+		events = append(events, ports.StatusEvent{
+			From: orders.Status(row.From.String), To: orders.Status(row.To), AdminUID: row.Admin.String, At: row.At,
+		})
+	}
+	return events, nil
+}
+
+// UpdateStatus trava a linha do pedido (FOR UPDATE), então duas mudanças simultâneas são serializadas
+// e a segunda enxerga o status já atualizado. Por isso um duplo clique em "cancelar" devolve o estoque uma vez só.
+func (r *Repository) UpdateStatus(ctx context.Context, c ports.ChangeStatus) (orders.Order, error) {
+	err := r.inTx(ctx, func(tx *sqlx.Tx) error {
+		var cur struct {
+			UID    string `db:"uid"`
+			Code   string `db:"code"`
+			Status string `db:"status"`
+		}
+		err := tx.GetContext(ctx, &cur, `SELECT uid, code, status FROM orders WHERE code = $1 FOR UPDATE`, c.Code)
+		if errors.Is(err, sql.ErrNoRows) {
+			return httperr.NotFoundError("pedido não encontrado")
+		}
+		if err != nil {
+			return err
+		}
+
+		from := orders.Status(cur.Status)
+		if !orders.CanTransition(from, c.To) {
+			return httperr.ConflictError(fmt.Sprintf("transição de status não permitida: %s → %s", from, c.To))
+		}
+
+		if _, err := tx.ExecContext(ctx, `UPDATE orders SET status = $2, updated_at = now() WHERE uid = $1`, cur.UID, string(c.To)); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO order_events (order_uid, from_status, to_status, admin_uid)
+			VALUES ($1, $2, $3, NULLIF($4, '')::uuid)`, cur.UID, string(from), string(c.To), c.AdminUID); err != nil {
+			return err
+		}
+
+		if c.To == orders.StatusCancelled {
+			return restoreStock(ctx, tx, cur.UID, cur.Code, c.AdminUID)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return r.GetByCode(ctx, c.Code)
+}
+
+// restoreStock devolve ao estoque o que o pedido tinha baixado, em ordem fixa de produto
+// (a mesma da criação), para pedidos e cancelamentos simultâneos nunca travarem um ao outro.
+func restoreStock(ctx context.Context, tx *sqlx.Tx, orderUID, code, adminUID string) error {
+	var items []struct {
+		ProductUID string `db:"product_uid"`
+		Quantity   int    `db:"quantity"`
+	}
+	if err := tx.SelectContext(ctx, &items,
+		`SELECT product_uid::text AS product_uid, quantity FROM order_items WHERE order_uid = $1 ORDER BY product_uid`, orderUID); err != nil {
+		return err
+	}
+	for _, it := range items {
+		if _, err := tx.ExecContext(ctx, `UPDATE products SET stock = stock + $2, updated_at = now() WHERE uid = $1`, it.ProductUID, it.Quantity); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO stock_movements (product_uid, delta, reason, order_uid, admin_uid)
+			VALUES ($1, $2, $3, $4, NULLIF($5, '')::uuid)`, it.ProductUID, it.Quantity, "pedido cancelado "+code, orderUID, adminUID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func isCodeTaken(err error) bool {
