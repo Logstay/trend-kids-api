@@ -81,17 +81,88 @@ func (r *Repo) AdjustStock(ctx context.Context, m ports.StockMovement) (int, err
 	return p.Stock() + m.Delta, nil
 }
 
-func (r *Repo) SetImage(_ context.Context, uid, key string) (string, error) {
+func (r *Repo) withImages(i int, images []string) {
+	p := r.Products[i]
+	r.Products[i] = catalog.Restore(catalog.Snapshot{
+		UID: p.UID(), Name: p.Name(), Slug: p.Slug(), Category: string(p.Category()), Description: p.Description(),
+		PriceCents: p.PriceCents(), Stock: p.Stock(), Active: p.Active(), Images: images, CreatedAt: p.CreatedAt(), UpdatedAt: p.UpdatedAt(),
+	})
+}
+
+func (r *Repo) index(uid string) int {
 	for i, p := range r.Products {
 		if p.UID() == uid {
-			prev := p.Image()
-			snap := catalog.Snapshot{
-				UID: p.UID(), Name: p.Name(), Slug: p.Slug(), Category: string(p.Category()), Description: p.Description(),
-				PriceCents: p.PriceCents(), Stock: p.Stock(), Active: p.Active(), Image: key, CreatedAt: p.CreatedAt(), UpdatedAt: p.UpdatedAt(),
-			}
-			r.Products[i] = catalog.Restore(snap)
-			return prev, r.Err
+			return i
 		}
 	}
-	return "", httperr.NotFoundError("produto não encontrado")
+	return -1
+}
+
+func (r *Repo) AddImage(_ context.Context, uid, key string) error {
+	i := r.index(uid)
+	if i < 0 {
+		return httperr.NotFoundError("produto não encontrado")
+	}
+	current := r.Products[i].Images()
+	for _, k := range current {
+		if k == key {
+			return httperr.ConflictError("essa foto já está cadastrada")
+		}
+	}
+	if len(current) >= ports.MaxImages {
+		return httperr.ConflictError("limite de fotos por produto atingido")
+	}
+	if r.Err != nil {
+		return r.Err
+	}
+	r.withImages(i, append(current, key))
+	return nil
+}
+
+func (r *Repo) RemoveImage(_ context.Context, uid, key string) error {
+	i := r.index(uid)
+	if i < 0 {
+		return httperr.NotFoundError("produto não encontrado")
+	}
+	var kept []string
+	found := false
+	for _, k := range r.Products[i].Images() {
+		if k == key {
+			found = true
+			continue
+		}
+		kept = append(kept, k)
+	}
+	if !found {
+		return httperr.NotFoundError("foto não encontrada")
+	}
+	if r.Err != nil {
+		return r.Err
+	}
+	r.withImages(i, kept)
+	return nil
+}
+
+func (r *Repo) ReorderImages(_ context.Context, uid string, keys []string) error {
+	i := r.index(uid)
+	if i < 0 {
+		return httperr.NotFoundError("produto não encontrado")
+	}
+	current := r.Products[i].Images()
+	seen := map[string]bool{}
+	for _, k := range keys {
+		seen[k] = true
+	}
+	valid := len(keys) == len(current) && len(seen) == len(keys)
+	for _, k := range current {
+		valid = valid && seen[k]
+	}
+	if !valid {
+		return httperr.RequiredError("a nova ordem precisa ter exatamente as fotos atuais, sem repetir")
+	}
+	if r.Err != nil {
+		return r.Err
+	}
+	r.withImages(i, append([]string(nil), keys...))
+	return nil
 }

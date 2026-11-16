@@ -53,16 +53,27 @@ func TestFactoryFrom_StillValidates(t *testing.T) {
 	assert.Error(t, f.Name(" "))
 }
 
-func TestProductImage_NewProductHasNoneAndEditingKeepsIt(t *testing.T) {
-	assert.Empty(t, existing(t).Image(), "produto novo nasce sem foto")
+func TestProductImages_NewHasNoneAndEditingKeepsThemInOrder(t *testing.T) {
+	assert.Empty(t, existing(t).Images(), "produto novo nasce sem fotos")
+	assert.Empty(t, existing(t).Image(), "e sem capa")
 
-	withPhoto := catalog.Restore(catalog.Snapshot{
+	withPhotos := catalog.Restore(catalog.Snapshot{
 		UID: "u1", Name: "Classic Clog Rosa", Slug: "classic-clog-rosa", Category: "Classic", PriceCents: 18990,
-		Image: "3f2b8c1e-5d4a-4b6f-9a1c-0e7d2f8b6a31.webp",
+		Images: []string{"a.webp", "b.webp", "c.webp"},
 	})
-	assert.Equal(t, "3f2b8c1e-5d4a-4b6f-9a1c-0e7d2f8b6a31.webp", withPhoto.Image())
+	assert.Equal(t, []string{"a.webp", "b.webp", "c.webp"}, withPhotos.Images())
+	assert.Equal(t, "a.webp", withPhotos.Image(), "a primeira é a capa")
 
-	f := catalog.NewProductFactoryFrom(withPhoto)
+	f := catalog.NewProductFactoryFrom(withPhotos)
 	require.NoError(t, f.PriceCents(15990))
-	assert.Equal(t, withPhoto.Image(), f.Build().Image(), "editar o preço não perde a foto")
+	assert.Equal(t, withPhotos.Images(), f.Build().Images(), "editar o preço não perde as fotos")
+}
+
+func TestProductImages_ReturnedSliceIsACopy(t *testing.T) {
+	p := catalog.Restore(catalog.Snapshot{UID: "u1", Name: "X", Slug: "x", Category: "Classic", PriceCents: 1, Images: []string{"a.webp", "b.webp"}})
+
+	got := p.Images()
+	got[0] = "adulterada.webp"
+
+	assert.Equal(t, "a.webp", p.Images()[0], "mexer no que foi devolvido não altera o produto")
 }

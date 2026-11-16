@@ -17,6 +17,8 @@ const (
 const (
 	DefaultLimit = 20
 	MaxLimit     = 100
+	// MaxImages: fotos por produto.
+	MaxImages = 8
 )
 
 type Filter struct {
@@ -44,9 +46,14 @@ type Repository interface {
 	// AdjustStock soma delta ao estoque de forma atômica e registra a movimentação.
 	// Devolve o novo estoque; httperr.ConflictError se o saldo ficaria negativo.
 	AdjustStock(ctx context.Context, m StockMovement) (newStock int, err error)
-	// SetImage troca a foto (key vazia remove) e devolve a chave ANTERIOR, para o arquivo velho ser apagado.
-	// Devolve httperr.NotFoundError se o produto não existir.
-	SetImage(ctx context.Context, uid, key string) (previous string, err error)
+	// AddImage põe a foto no FIM da galeria (a primeira é a capa). httperr.ConflictError se a galeria já tem
+	// MaxImages fotos (garantido de forma atômica, mesmo com envios simultâneos) ou se a chave já existe.
+	AddImage(ctx context.Context, uid, key string) error
+	// RemoveImage tira a foto e mantém a ordem das demais. httperr.NotFoundError se a foto não é deste produto.
+	RemoveImage(ctx context.Context, uid, key string) error
+	// ReorderImages aplica a nova ordem. Precisa ser EXATAMENTE as fotos atuais, em qualquer ordem
+	// (httperr.RequiredError caso contrário). A primeira passa a ser a capa.
+	ReorderImages(ctx context.Context, uid string, keys []string) error
 }
 
 type StockMovement struct {

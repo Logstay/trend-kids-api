@@ -11,6 +11,7 @@ import (
 
 	"github.com/Logstay/trend-kids-api/internal/application/catalog/commands"
 	"github.com/Logstay/trend-kids-api/internal/domain/media"
+	ports "github.com/Logstay/trend-kids-api/internal/ports/catalog"
 	"github.com/Logstay/trend-kids-api/internal/ports/catalog/catalogtest"
 	"github.com/Logstay/trend-kids-api/internal/ports/media/mediatest"
 	httperr "github.com/Logstay/trend-kids-api/pkg/errors"
@@ -25,116 +26,164 @@ func realPNG(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
-func withProduct(t *testing.T) (*catalogtest.Repo, *mediatest.Storage, string) {
+type gallery struct {
+	repo  *catalogtest.Repo
+	store *mediatest.Storage
+	uid   string
+}
+
+func newGallery(t *testing.T) gallery {
 	t.Helper()
-	repo, uid := &catalogtest.Repo{}, ""
+	repo := &catalogtest.Repo{}
 	p, err := commands.SaveHandler{Repository: repo}.Handle(context.Background(), validCmd())
 	require.NoError(t, err)
-	uid = p.UID()
-	return repo, mediatest.New(), uid
+	return gallery{repo: repo, store: mediatest.New(), uid: p.UID()}
 }
 
-func TestSetImage_StoresTheFileAndLinksItToTheProduct(t *testing.T) {
-	repo, store, uid := withProduct(t)
-
-	p, err := commands.SetImageHandler{Products: repo, Storage: store}.Handle(context.Background(), uid, realPNG(t))
-
+func (g gallery) add(t *testing.T) string {
+	t.Helper()
+	p, err := commands.AddImageHandler{Products: g.repo, Storage: g.store}.Handle(context.Background(), g.uid, realPNG(t))
 	require.NoError(t, err)
-	assert.True(t, media.ValidKey(p.Image()), p.Image())
-	assert.True(t, strings.HasSuffix(p.Image(), ".png"), "a extensão vem do CONTEÚDO")
-	assert.Contains(t, store.Files, p.Image())
-	assert.Equal(t, p.Image(), repo.Products[0].Image())
+	imgs := p.Images()
+	return imgs[len(imgs)-1]
 }
 
-func TestSetImage_ReplacingDeletesTheOldFile(t *testing.T) {
-	repo, store, uid := withProduct(t)
-	h := commands.SetImageHandler{Products: repo, Storage: store}
-	first, err := h.Handle(context.Background(), uid, realPNG(t))
-	require.NoError(t, err)
+func TestAddImage_StoresTheFileAndAppendsItToTheGallery(t *testing.T) {
+	g := newGallery(t)
 
-	second, err := h.Handle(context.Background(), uid, realPNG(t))
+	first := g.add(t)
+	second := g.add(t)
 
-	require.NoError(t, err)
-	assert.NotEqual(t, first.Image(), second.Image())
-	assert.NotContains(t, store.Files, first.Image(), "o arquivo antigo foi apagado")
-	assert.Contains(t, store.Files, second.Image())
-	assert.Len(t, store.Files, 1, "sem arquivos órfãos")
+	p := g.repo.Products[0]
+	assert.Equal(t, []string{first, second}, p.Images())
+	assert.Equal(t, first, p.Image(), "a primeira é a capa")
+	assert.True(t, media.ValidKey(first))
+	assert.True(t, strings.HasSuffix(first, ".png"), "a extensão vem do CONTEÚDO")
+	assert.Len(t, g.store.Files, 2)
 }
 
-func TestSetImage_InvalidFileChangesNothing(t *testing.T) {
-	repo, store, uid := withProduct(t)
+func TestAddImage_InvalidFileChangesNothing(t *testing.T) {
+	g := newGallery(t)
 
-	_, err := commands.SetImageHandler{Products: repo, Storage: store}.Handle(context.Background(), uid, []byte(`<svg><script>alert(1)</script></svg>`))
+	_, err := commands.AddImageHandler{Products: g.repo, Storage: g.store}.Handle(context.Background(), g.uid, []byte(`<svg><script>alert(1)</script></svg>`))
 
 	var req httperr.RequiredError
 	require.True(t, errors.As(err, &req))
-	assert.Empty(t, store.Files)
-	assert.Empty(t, repo.Products[0].Image())
+	assert.Empty(t, g.store.Files)
+	assert.Empty(t, g.repo.Products[0].Images())
 }
 
-func TestSetImage_UnknownProductIsNotFoundAndWritesNothing(t *testing.T) {
-	repo, store, _ := withProduct(t)
+func TestAddImage_UnknownProductIsNotFoundAndWritesNothing(t *testing.T) {
+	g := newGallery(t)
 
-	_, err := commands.SetImageHandler{Products: repo, Storage: store}.Handle(context.Background(), "nao-existe", realPNG(t))
+	_, err := commands.AddImageHandler{Products: g.repo, Storage: g.store}.Handle(context.Background(), "nao-existe", realPNG(t))
 
 	var nf httperr.NotFoundError
 	require.True(t, errors.As(err, &nf))
-	assert.Empty(t, store.Files, "não grava arquivo para um produto que não existe")
+	assert.Empty(t, g.store.Files, "não grava arquivo para um produto que não existe")
 }
 
-func TestSetImage_RepositoryFailureRemovesTheFileJustSaved(t *testing.T) {
-	repo, store, uid := withProduct(t)
-	repo.Err = errors.New("banco fora do ar")
+func TestAddImage_WhenTheGalleryIsFullItRefusesBeforeWritingAnyFile(t *testing.T) {
+	g := newGallery(t)
+	for i := 0; i < ports.MaxImages; i++ {
+		g.add(t)
+	}
+	require.Len(t, g.store.Files, ports.MaxImages)
 
-	_, err := commands.SetImageHandler{Products: repo, Storage: store}.Handle(context.Background(), uid, realPNG(t))
+	_, err := commands.AddImageHandler{Products: g.repo, Storage: g.store}.Handle(context.Background(), g.uid, realPNG(t))
+
+	var conflict httperr.ConflictError
+	require.True(t, errors.As(err, &conflict))
+	assert.Len(t, g.store.Files, ports.MaxImages, "nenhum arquivo a mais no disco")
+	assert.Len(t, g.repo.Products[0].Images(), ports.MaxImages)
+}
+
+func TestAddImage_RepositoryFailureRemovesTheFileJustSaved(t *testing.T) {
+	g := newGallery(t)
+	g.repo.Err = errors.New("banco fora do ar")
+
+	_, err := commands.AddImageHandler{Products: g.repo, Storage: g.store}.Handle(context.Background(), g.uid, realPNG(t))
 
 	require.Error(t, err)
-	assert.Empty(t, store.Files, "sem órfão: o arquivo novo foi desfeito")
+	assert.Empty(t, g.store.Files, "sem órfão: o arquivo novo foi desfeito")
 }
 
-func TestSetImage_StorageFailureLeavesTheProductUntouched(t *testing.T) {
-	repo, store, uid := withProduct(t)
-	store.SaveErr = mediatest.ErrDisk
+func TestAddImage_StorageFailureLeavesTheGalleryUntouched(t *testing.T) {
+	g := newGallery(t)
+	g.store.SaveErr = mediatest.ErrDisk
 
-	_, err := commands.SetImageHandler{Products: repo, Storage: store}.Handle(context.Background(), uid, realPNG(t))
+	_, err := commands.AddImageHandler{Products: g.repo, Storage: g.store}.Handle(context.Background(), g.uid, realPNG(t))
 
 	require.Error(t, err)
-	assert.Empty(t, repo.Products[0].Image())
+	assert.Empty(t, g.repo.Products[0].Images())
 }
 
-func TestSetImage_FailingToDeleteTheOldFileDoesNotFailTheUpload(t *testing.T) {
-	repo, store, uid := withProduct(t)
-	h := commands.SetImageHandler{Products: repo, Storage: store}
-	_, err := h.Handle(context.Background(), uid, realPNG(t))
+func TestRemoveImage_RemovesOnlyThatPhotoAndItsFile(t *testing.T) {
+	g := newGallery(t)
+	a, b, c := g.add(t), g.add(t), g.add(t)
+
+	p, err := commands.RemoveImageHandler{Products: g.repo, Storage: g.store}.Handle(context.Background(), g.uid, b)
+
 	require.NoError(t, err)
-	store.DeleteErr = mediatest.ErrDisk
-
-	p, err := h.Handle(context.Background(), uid, realPNG(t))
-
-	require.NoError(t, err, "a foto nova já está no ar; sobra um arquivo velho, não um erro para o usuário")
-	assert.Contains(t, store.Files, p.Image())
+	assert.Equal(t, []string{a, c}, p.Images(), "as outras mantêm a ordem")
+	assert.NotContains(t, g.store.Files, b)
+	assert.Len(t, g.store.Files, 2)
 }
 
-func TestRemoveImage_ClearsTheLinkAndDeletesTheFile(t *testing.T) {
-	repo, store, uid := withProduct(t)
-	p, err := commands.SetImageHandler{Products: repo, Storage: store}.Handle(context.Background(), uid, realPNG(t))
-	require.NoError(t, err)
-
-	got, err := commands.RemoveImageHandler{Products: repo, Storage: store}.Handle(context.Background(), uid)
-
-	require.NoError(t, err)
-	assert.Empty(t, got.Image())
-	assert.NotContains(t, store.Files, p.Image())
-}
-
-func TestRemoveImage_WithoutPhotoIsFineAndUnknownIsNotFound(t *testing.T) {
-	repo, store, uid := withProduct(t)
-	h := commands.RemoveImageHandler{Products: repo, Storage: store}
-
-	_, err := h.Handle(context.Background(), uid)
-	assert.NoError(t, err)
-
-	_, err = h.Handle(context.Background(), "nao-existe")
+func TestRemoveImage_UnknownOrMalformedKeyIsNotFoundAndTouchesNoFile(t *testing.T) {
+	g := newGallery(t)
+	keep := g.add(t)
+	h := commands.RemoveImageHandler{Products: g.repo, Storage: g.store}
 	var nf httperr.NotFoundError
+
+	for _, bad := range []string{media.NewKey(".png"), "../../etc/passwd", "a/b.png", "", "index.html"} {
+		_, err := h.Handle(context.Background(), g.uid, bad)
+		assert.True(t, errors.As(err, &nf), "%q", bad)
+	}
+	assert.Contains(t, g.store.Files, keep)
+	assert.Empty(t, g.store.Deleted, "nenhum Delete chegou ao armazenamento (chave estranha nunca vai ao disco)")
+	_, err := h.Handle(context.Background(), "nao-existe", keep)
+	assert.True(t, errors.As(err, &nf))
+}
+
+func TestRemoveImage_FailingToDeleteTheFileDoesNotFailTheRequest(t *testing.T) {
+	g := newGallery(t)
+	key := g.add(t)
+	g.store.DeleteErr = mediatest.ErrDisk
+
+	p, err := commands.RemoveImageHandler{Products: g.repo, Storage: g.store}.Handle(context.Background(), g.uid, key)
+
+	require.NoError(t, err, "a foto já saiu da galeria; sobra um arquivo, não um erro para o usuário")
+	assert.Empty(t, p.Images())
+}
+
+func TestReorderImages_AppliesTheOrderAndTheFirstBecomesTheCover(t *testing.T) {
+	g := newGallery(t)
+	a, b, c := g.add(t), g.add(t), g.add(t)
+
+	p, err := commands.ReorderImagesHandler{Products: g.repo}.Handle(context.Background(), g.uid, []string{c, a, b})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{c, a, b}, p.Images())
+	assert.Equal(t, c, p.Image())
+}
+
+func TestReorderImages_RejectsAnythingThatIsNotThePhotosOfTheProduct(t *testing.T) {
+	g := newGallery(t)
+	a, b := g.add(t), g.add(t)
+	h := commands.ReorderImagesHandler{Products: g.repo}
+	var req httperr.RequiredError
+
+	for name, order := range map[string][]string{
+		"faltando uma": {a}, "repetida": {a, a}, "estranha": {a, media.NewKey(".png")},
+		"chave com ../": {a, "../x.png"}, "vazia": {},
+	} {
+		_, err := h.Handle(context.Background(), g.uid, order)
+		assert.True(t, errors.As(err, &req), name)
+	}
+	assert.Equal(t, []string{a, b}, g.repo.Products[0].Images(), "a ordem não mudou")
+
+	var nf httperr.NotFoundError
+	_, err := h.Handle(context.Background(), "nao-existe", []string{a, b})
 	assert.True(t, errors.As(err, &nf))
 }

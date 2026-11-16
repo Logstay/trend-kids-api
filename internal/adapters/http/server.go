@@ -131,11 +131,14 @@ func registerAdmin(g *gin.RouterGroup, d Deps) {
 		products.POST("", ch.Create)
 		products.PUT("/:uid", ch.Update)
 		products.PATCH("/:uid/stock", ch.AdjustStock)
-		if d.Catalog.SetImage != nil {
-			products.POST("/:uid/image", ch.UploadImage)
+		if d.Catalog.AddImage != nil {
+			products.POST("/:uid/images", ch.UploadImage)
 		}
 		if d.Catalog.RemoveImage != nil {
-			products.DELETE("/:uid/image", ch.RemoveImage)
+			products.DELETE("/:uid/images/:key", ch.RemoveImage)
+		}
+		if d.Catalog.ReorderImages != nil {
+			products.PUT("/:uid/images/order", ch.ReorderImages)
 		}
 	}
 

@@ -23,12 +23,15 @@ type AdminCatalog struct {
 	AdjustStock interface {
 		Handle(ctx context.Context, cmd ports.AdjustStock) (int, error)
 	}
-	// SetImage e RemoveImage são opcionais: as rotas de foto só existem se forem informados.
-	SetImage interface {
+	// Os três abaixo são opcionais: as rotas de galeria só existem se forem informados.
+	AddImage interface {
 		Handle(ctx context.Context, uid string, data []byte) (catalog.Product, error)
 	}
 	RemoveImage interface {
-		Handle(ctx context.Context, uid string) (catalog.Product, error)
+		Handle(ctx context.Context, uid, key string) (catalog.Product, error)
+	}
+	ReorderImages interface {
+		Handle(ctx context.Context, uid string, keys []string) (catalog.Product, error)
 	}
 }
 
@@ -149,7 +152,7 @@ func (h adminCatalogHandler) UploadImage(c *gin.Context) {
 		return
 	}
 
-	p, err := h.AdminCatalog.SetImage.Handle(c.Request.Context(), c.Param("uid"), data)
+	p, err := h.AdminCatalog.AddImage.Handle(c.Request.Context(), c.Param("uid"), data)
 	if err != nil {
 		httperr.ErrorHandler(err, c)
 		return
@@ -158,7 +161,25 @@ func (h adminCatalogHandler) UploadImage(c *gin.Context) {
 }
 
 func (h adminCatalogHandler) RemoveImage(c *gin.Context) {
-	p, err := h.AdminCatalog.RemoveImage.Handle(c.Request.Context(), c.Param("uid"))
+	p, err := h.AdminCatalog.RemoveImage.Handle(c.Request.Context(), c.Param("uid"), c.Param("key"))
+	if err != nil {
+		httperr.ErrorHandler(err, c)
+		return
+	}
+	c.JSON(nethttp.StatusOK, toResponse(p, h.url))
+}
+
+type reorderImagesRequest struct {
+	Keys []string `json:"keys" binding:"required"`
+}
+
+// ReorderImages recebe a ordem completa das fotos; a primeira vira a capa.
+func (h adminCatalogHandler) ReorderImages(c *gin.Context) {
+	var req reorderImagesRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	p, err := h.AdminCatalog.ReorderImages.Handle(c.Request.Context(), c.Param("uid"), req.Keys)
 	if err != nil {
 		httperr.ErrorHandler(err, c)
 		return

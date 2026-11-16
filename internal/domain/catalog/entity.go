@@ -26,7 +26,10 @@ type Product interface {
 	PriceCents() int64
 	Stock() int
 	Active() bool
-	// Image é a chave do arquivo da foto principal (vazio = sem foto). A URL é montada pelo armazenamento.
+	// Images são as chaves dos arquivos de foto, em ordem de exibição (a primeira é a capa).
+	// A URL de cada uma é montada pelo armazenamento. Devolve uma cópia.
+	Images() []string
+	// Image é a capa (a primeira foto); vazio se o produto não tem foto.
 	Image() string
 	CreatedAt() time.Time
 	UpdatedAt() time.Time
@@ -41,7 +44,7 @@ type product struct {
 	priceCents  int64
 	stock       int
 	active      bool
-	image       string
+	images      []string
 	createdAt   time.Time
 	updatedAt   time.Time
 }
@@ -57,4 +60,11 @@ func (p *product) Active() bool         { return p.active }
 func (p *product) CreatedAt() time.Time { return p.createdAt }
 func (p *product) UpdatedAt() time.Time { return p.updatedAt }
 
-func (p *product) Image() string { return p.image }
+func (p *product) Images() []string { return append([]string(nil), p.images...) }
+
+func (p *product) Image() string {
+	if len(p.images) == 0 {
+		return ""
+	}
+	return p.images[0]
+}

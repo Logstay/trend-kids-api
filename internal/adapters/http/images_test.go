@@ -21,6 +21,7 @@ import (
 	catalogcmd "github.com/Logstay/trend-kids-api/internal/application/catalog/commands"
 	catalogq "github.com/Logstay/trend-kids-api/internal/application/catalog/queries"
 	identitycmd "github.com/Logstay/trend-kids-api/internal/application/identity/commands"
+	ports "github.com/Logstay/trend-kids-api/internal/ports/catalog"
 	"github.com/Logstay/trend-kids-api/internal/ports/catalog/catalogtest"
 	identityports "github.com/Logstay/trend-kids-api/internal/ports/identity"
 	"github.com/Logstay/trend-kids-api/internal/ports/identity/identitytest"
@@ -59,12 +60,13 @@ func newGallery(t *testing.T) gallery {
 		Images:         store,
 		UploadsDir:     store.Dir(),
 		Catalog: &http.AdminCatalog{
-			List:        catalogq.ListHandler{Repository: repo},
-			Create:      catalogcmd.SaveHandler{Repository: repo},
-			Update:      catalogcmd.UpdateHandler{Repository: repo},
-			AdjustStock: catalogcmd.AdjustStockHandler{Repository: repo},
-			SetImage:    catalogcmd.SetImageHandler{Products: repo, Storage: store},
-			RemoveImage: catalogcmd.RemoveImageHandler{Products: repo, Storage: store},
+			List:          catalogq.ListHandler{Repository: repo},
+			Create:        catalogcmd.SaveHandler{Repository: repo},
+			Update:        catalogcmd.UpdateHandler{Repository: repo},
+			AdjustStock:   catalogcmd.AdjustStockHandler{Repository: repo},
+			AddImage:      catalogcmd.AddImageHandler{Products: repo, Storage: store},
+			RemoveImage:   catalogcmd.RemoveImageHandler{Products: repo, Storage: store},
+			ReorderImages: catalogcmd.ReorderImagesHandler{Products: repo},
 		},
 	})
 	rec := post(h, "/v1/admin/login", loginBody("dono@trendkids.com.br", adminPassword))
@@ -99,7 +101,7 @@ func (g gallery) upload(uid, field, filename string, data []byte, session bool) 
 	_, _ = part.Write(data)
 	_ = w.Close()
 
-	req := httptest.NewRequest("POST", "/v1/admin/products/"+uid+"/image", &body)
+	req := httptest.NewRequest("POST", "/v1/admin/products/"+uid+"/images", &body)
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	if session {
 		req.AddCookie(g.cookie)
@@ -127,6 +129,28 @@ func pngData(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
+type galleryJSON struct {
+	Image  string `json:"image"`
+	Images []struct {
+		Key string `json:"key"`
+		URL string `json:"url"`
+	} `json:"images"`
+}
+
+func parse(t *testing.T, rec *httptest.ResponseRecorder) galleryJSON {
+	t.Helper()
+	var g galleryJSON
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &g), rec.Body.String())
+	return g
+}
+
+func (g gallery) addPhoto(t *testing.T) galleryJSON {
+	t.Helper()
+	rec := g.upload(g.uid, "image", "foto.png", pngData(t), true)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	return parse(t, rec)
+}
+
 func imageURL(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
 	var p struct {
@@ -143,27 +167,30 @@ func TestImages_UploadRequiresSessionAndWritesNothingWithout(t *testing.T) {
 	assert.Empty(t, g.files(t))
 }
 
-func TestImages_UploadStoresTheFileAndTheProductShowsItsUrl(t *testing.T) {
+func TestImages_UploadsAccumulateInOrderAndTheFirstIsTheCover(t *testing.T) {
 	g := newGallery(t)
 
-	rec := g.upload(g.uid, "image", "minha foto.png", pngData(t), true)
+	one := g.addPhoto(t)
+	two := g.addPhoto(t)
 
-	require.Equal(t, 200, rec.Code, rec.Body.String())
-	url := imageURL(t, rec)
-	assert.Regexp(t, `^/uploads/[0-9a-f-]{36}\.png$`, url, "nome gerado pelo servidor, não o do arquivo enviado")
-	assert.Len(t, g.files(t), 1)
-	assert.NotContains(t, rec.Body.String(), "minha foto", "o nome enviado nunca é usado")
+	require.Len(t, one.Images, 1)
+	require.Len(t, two.Images, 2)
+	assert.Regexp(t, `^/uploads/[0-9a-f-]{36}\.png$`, two.Images[0].URL, "nome gerado pelo servidor")
+	assert.Equal(t, one.Images[0].Key, two.Images[0].Key, "a primeira continua sendo a primeira")
+	assert.Equal(t, two.Images[0].URL, two.Image, "image = capa")
+	assert.Len(t, g.files(t), 2)
 
 	pub := httptest.NewRecorder()
 	g.handler.ServeHTTP(pub, httptest.NewRequest("GET", "/v1/products", nil))
-	assert.Contains(t, pub.Body.String(), `"image":"`+url+`"`, "a vitrine pública já mostra a foto")
+	assert.Contains(t, pub.Body.String(), `"images":[{"key":"`+two.Images[0].Key, "a vitrine pública mostra a galeria")
 }
 
-func TestImages_ProductWithoutPhotoHasEmptyImage(t *testing.T) {
+func TestImages_ProductWithoutPhotosHasEmptyCoverAndEmptyGallery(t *testing.T) {
 	g := newGallery(t)
 	pub := httptest.NewRecorder()
 	g.handler.ServeHTTP(pub, httptest.NewRequest("GET", "/v1/products", nil))
 	assert.Contains(t, pub.Body.String(), `"image":""`)
+	assert.Contains(t, pub.Body.String(), `"images":[]`, "lista vazia, nunca null")
 }
 
 func TestImages_UploadRejectsFilesThatAreNotRealImages(t *testing.T) {
@@ -175,20 +202,17 @@ func TestImages_UploadRejectsFilesThatAreNotRealImages(t *testing.T) {
 		"vazio":                             {},
 	}
 	for name, data := range attacks {
-		rec := g.upload(g.uid, "image", "foto.png", data, true)
-		assert.Equal(t, 400, rec.Code, name)
+		assert.Equal(t, 400, g.upload(g.uid, "image", "foto.png", data, true).Code, name)
 	}
 	assert.Empty(t, g.files(t), "nada foi gravado no disco")
-	assert.Empty(t, g.repo.Products[0].Image())
+	assert.Empty(t, g.repo.Products[0].Images())
 }
 
 func TestImages_UploadRejectsHugeBodies(t *testing.T) {
 	g := newGallery(t)
 	huge := append(pngData(t), bytes.Repeat([]byte{0}, 8<<20)...)
 
-	rec := g.upload(g.uid, "image", "grande.png", huge, true)
-
-	assert.Equal(t, 400, rec.Code)
+	assert.Equal(t, 400, g.upload(g.uid, "image", "grande.png", huge, true).Code)
 	assert.Empty(t, g.files(t))
 }
 
@@ -196,44 +220,100 @@ func TestImages_UploadNeedsTheImageFieldAndMultipart(t *testing.T) {
 	g := newGallery(t)
 
 	assert.Equal(t, 400, g.upload(g.uid, "outro_campo", "foto.png", pngData(t), true).Code, "campo errado")
-	assert.Equal(t, 400, g.json("POST", "/v1/admin/products/"+g.uid+"/image", `{"image":"x"}`, true).Code, "não é multipart")
+	assert.Equal(t, 400, g.json("POST", "/v1/admin/products/"+g.uid+"/images", `{"image":"x"}`, true).Code, "não é multipart")
 	assert.Empty(t, g.files(t))
 }
 
 func TestImages_UploadForUnknownProductIs404AndLeavesNoFile(t *testing.T) {
 	g := newGallery(t)
-	rec := g.upload("nao-existe", "image", "foto.png", pngData(t), true)
-	assert.Equal(t, 404, rec.Code)
+	assert.Equal(t, 404, g.upload("nao-existe", "image", "foto.png", pngData(t), true).Code)
 	assert.Empty(t, g.files(t))
 }
 
-func TestImages_ReplacingKeepsOnlyTheNewFile(t *testing.T) {
+func TestImages_NinthPhotoIsRefusedWithoutLeavingAFileBehind(t *testing.T) {
 	g := newGallery(t)
-	first := imageURL(t, g.upload(g.uid, "image", "a.png", pngData(t), true))
-	second := imageURL(t, g.upload(g.uid, "image", "b.png", pngData(t), true))
+	for i := 0; i < ports.MaxImages; i++ {
+		g.addPhoto(t)
+	}
 
-	assert.NotEqual(t, first, second)
-	assert.Len(t, g.files(t), 1, "o arquivo antigo foi apagado")
+	rec := g.upload(g.uid, "image", "extra.png", pngData(t), true)
+
+	assert.Equal(t, 409, rec.Code)
+	assert.Contains(t, rec.Body.String(), "limite")
+	assert.Len(t, g.files(t), ports.MaxImages, "nenhum arquivo a mais no disco")
 }
 
-func TestImages_DeleteRemovesThePhotoAndTheFile(t *testing.T) {
+func TestImages_DeleteRemovesOnlyThatPhotoAndItsFile(t *testing.T) {
 	g := newGallery(t)
-	g.upload(g.uid, "image", "a.png", pngData(t), true)
-	require.Len(t, g.files(t), 1)
+	g.addPhoto(t)
+	both := g.addPhoto(t)
+	first, second := both.Images[0].Key, both.Images[1].Key
 
-	assert.Equal(t, 401, g.json("DELETE", "/v1/admin/products/"+g.uid+"/image", "", false).Code)
-	rec := g.json("DELETE", "/v1/admin/products/"+g.uid+"/image", "", true)
+	assert.Equal(t, 401, g.json("DELETE", "/v1/admin/products/"+g.uid+"/images/"+first, "", false).Code)
+	rec := g.json("DELETE", "/v1/admin/products/"+g.uid+"/images/"+first, "", true)
 
-	require.Equal(t, 200, rec.Code)
-	assert.Empty(t, imageURL(t, rec))
-	assert.Empty(t, g.files(t))
-	assert.Equal(t, 404, g.json("DELETE", "/v1/admin/products/nao-existe/image", "", true).Code)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	left := parse(t, rec)
+	require.Len(t, left.Images, 1)
+	assert.Equal(t, second, left.Images[0].Key)
+	assert.Equal(t, left.Images[0].URL, left.Image, "a segunda virou a capa")
+	assert.Equal(t, []string{second}, g.files(t))
+}
+
+func TestImages_DeleteWithUnknownOrMaliciousKeyIs404AndTouchesNothing(t *testing.T) {
+	g := newGallery(t)
+	keep := g.addPhoto(t).Images[0].Key
+	secret := filepath.Join(filepath.Dir(g.dir), "segredo.png")
+	require.NoError(t, os.WriteFile(secret, []byte("nao-apague"), 0o600))
+
+	for _, k := range []string{"3f2b8c1e-5d4a-4b6f-9a1c-0e7d2f8b6a31.png", "..%2Fsegredo.png", "nao-e-chave.png", "index.html"} {
+		assert.Equal(t, 404, g.json("DELETE", "/v1/admin/products/"+g.uid+"/images/"+k, "", true).Code, k)
+	}
+	assert.Equal(t, 404, g.json("DELETE", "/v1/admin/products/nao-existe/images/"+keep, "", true).Code)
+	assert.Equal(t, []string{keep}, g.files(t))
+	still, err := os.ReadFile(secret)
+	require.NoError(t, err)
+	assert.Equal(t, "nao-apague", string(still))
+}
+
+func TestImages_ReorderMakesAnotherPhotoTheCover(t *testing.T) {
+	g := newGallery(t)
+	g.addPhoto(t)
+	g.addPhoto(t)
+	three := g.addPhoto(t)
+	a, b, c := three.Images[0].Key, three.Images[1].Key, three.Images[2].Key
+	body := `{"keys":["` + c + `","` + a + `","` + b + `"]}`
+
+	assert.Equal(t, 401, g.json("PUT", "/v1/admin/products/"+g.uid+"/images/order", body, false).Code)
+	rec := g.json("PUT", "/v1/admin/products/"+g.uid+"/images/order", body, true)
+
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	got := parse(t, rec)
+	require.Len(t, got.Images, 3)
+	assert.Equal(t, []string{c, a, b}, []string{got.Images[0].Key, got.Images[1].Key, got.Images[2].Key})
+	assert.Equal(t, got.Images[0].URL, got.Image, "a nova primeira é a capa")
+}
+
+func TestImages_ReorderRejectsBadRequests(t *testing.T) {
+	g := newGallery(t)
+	g.addPhoto(t)
+	two := g.addPhoto(t)
+	a, b := two.Images[0].Key, two.Images[1].Key
+	url := "/v1/admin/products/" + g.uid + "/images/order"
+
+	assert.Equal(t, 400, g.json("PUT", url, `{"keys":["`+a+`"]}`, true).Code, "faltando uma")
+	assert.Equal(t, 400, g.json("PUT", url, `{"keys":["`+a+`","`+a+`"]}`, true).Code, "repetida")
+	assert.Equal(t, 400, g.json("PUT", url, `{"keys":["`+a+`","../x.png"]}`, true).Code, "chave com ../")
+	assert.Equal(t, 400, g.json("PUT", url, `{}`, true).Code, "sem keys")
+	assert.Equal(t, 400, g.json("PUT", url, `{`, true).Code, "json quebrado")
+	assert.Equal(t, 404, g.json("PUT", "/v1/admin/products/nao-existe/images/order", `{"keys":["`+a+`","`+b+`"]}`, true).Code)
+	assert.Equal(t, a, g.repo.Products[0].Images()[0], "a ordem não mudou")
 }
 
 func TestImages_ServedWithSafeHeadersAndTheRightType(t *testing.T) {
 	g := newGallery(t)
 	data := pngData(t)
-	url := imageURL(t, g.upload(g.uid, "image", "a.png", data, true))
+	url := parse(t, g.upload(g.uid, "image", "a.png", data, true)).Images[0].URL
 
 	rec := httptest.NewRecorder()
 	g.handler.ServeHTTP(rec, httptest.NewRequest("GET", url, nil))

@@ -38,9 +38,9 @@ func newEnv(t *testing.T) env {
 	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })
 
-	_, err = db.Exec(`DROP TABLE IF EXISTS order_events, order_items, orders, stock_movements, products`)
+	_, err = db.Exec(`DROP TABLE IF EXISTS product_images, order_events, order_items, orders, stock_movements, products`)
 	require.NoError(t, err)
-	for _, f := range []string{"V1__create_products.sql", "V3__create_stock_movements.sql", "V4__create_orders.sql", "V5__create_order_events.sql", "V8__add_product_image.sql"} {
+	for _, f := range []string{"V1__create_products.sql", "V3__create_stock_movements.sql", "V4__create_orders.sql", "V5__create_order_events.sql", "V8__add_product_image.sql", "V9__create_product_images.sql"} {
 		sqlText, err := os.ReadFile("../../../../config/migrations/" + f)
 		require.NoError(t, err)
 		_, err = db.Exec(string(sqlText))

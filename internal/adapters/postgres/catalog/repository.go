@@ -13,6 +13,7 @@ import (
 	httperr "github.com/Logstay/trend-kids-api/pkg/errors"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
 
 type Repository struct {
@@ -30,19 +31,48 @@ type row struct {
 	PriceCents  int64     `db:"price_cents"`
 	Stock       int       `db:"stock"`
 	Active      bool      `db:"active"`
-	Image       string    `db:"image_key"`
 	CreatedAt   time.Time `db:"created_at"`
 	UpdatedAt   time.Time `db:"updated_at"`
 }
 
-func (r row) product() catalog.Product {
+func (r row) product(images []string) catalog.Product {
 	return catalog.Restore(catalog.Snapshot{
 		UID: r.UID, Name: r.Name, Slug: r.Slug, Category: r.Category, Description: r.Description,
-		PriceCents: r.PriceCents, Stock: r.Stock, Active: r.Active, Image: r.Image, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		PriceCents: r.PriceCents, Stock: r.Stock, Active: r.Active, Images: images, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	})
 }
 
-const columns = `uid, name, slug, category, description, price_cents, stock, active, image_key, created_at, updated_at`
+// imagesFor carrega as fotos de vários produtos de uma vez (sem N+1), em ordem de exibição.
+func (r *Repository) imagesFor(ctx context.Context, uids []string) (map[string][]string, error) {
+	out := make(map[string][]string, len(uids))
+	if len(uids) == 0 {
+		return out, nil
+	}
+	var rows []struct {
+		ProductUID string `db:"product_uid"`
+		Key        string `db:"image_key"`
+	}
+	if err := r.db.SelectContext(ctx, &rows,
+		`SELECT product_uid::text AS product_uid, image_key FROM product_images WHERE product_uid = ANY($1::uuid[]) ORDER BY product_uid, position`,
+		pq.Array(uids)); err != nil {
+		return nil, err
+	}
+	for _, rw := range rows {
+		out[rw.ProductUID] = append(out[rw.ProductUID], rw.Key)
+	}
+	return out, nil
+}
+
+// one monta um produto só (com as fotos).
+func (r *Repository) one(ctx context.Context, rw row) (catalog.Product, error) {
+	imgs, err := r.imagesFor(ctx, []string{rw.UID})
+	if err != nil {
+		return nil, err
+	}
+	return rw.product(imgs[rw.UID]), nil
+}
+
+const columns = `uid, name, slug, category, description, price_cents, stock, active, created_at, updated_at`
 
 const initialStockReason = "estoque inicial"
 
@@ -72,7 +102,7 @@ func (r *Repository) GetByUID(ctx context.Context, uid string) (catalog.Product,
 	if err != nil {
 		return nil, err
 	}
-	return rw.product(), nil
+	return r.one(ctx, rw)
 }
 
 // Update não toca em estoque nem em slug: o primeiro só muda por movimentação, o segundo é a URL pública.
@@ -128,22 +158,112 @@ func insertMovement(ctx context.Context, tx *sqlx.Tx, m ports.StockMovement) err
 	return err
 }
 
-// SetImage troca a chave da foto e devolve a anterior. A linha é travada (FOR UPDATE) para duas trocas
-// simultâneas não devolverem a mesma "anterior" (o que deixaria um arquivo órfão no disco).
-func (r *Repository) SetImage(ctx context.Context, uid, key string) (string, error) {
-	if _, err := uuid.Parse(uid); err != nil {
-		return "", errProductNotFound
-	}
-	var previous string
-	err := r.db.GetContext(ctx, &previous, `
-		WITH old AS (SELECT image_key FROM products WHERE uid = $1 FOR UPDATE)
-		UPDATE products SET image_key = $2, updated_at = now()
-		  FROM old WHERE products.uid = $1
-		RETURNING old.image_key`, uid, key)
+// lockProduct trava a linha do produto: adições, remoções e reordenações da galeria do MESMO produto
+// passam a andar em fila, o que garante o limite de fotos e a ordem mesmo com várias pessoas ao mesmo tempo.
+func lockProduct(ctx context.Context, tx *sqlx.Tx, uid string) error {
+	var locked string
+	err := tx.GetContext(ctx, &locked, `SELECT uid::text FROM products WHERE uid = $1 FOR UPDATE`, uid)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", errProductNotFound
+		return errProductNotFound
 	}
-	return previous, err
+	return err
+}
+
+func (r *Repository) AddImage(ctx context.Context, uid, key string) error {
+	if _, err := uuid.Parse(uid); err != nil {
+		return errProductNotFound
+	}
+	return r.inTx(ctx, func(tx *sqlx.Tx) error {
+		if err := lockProduct(ctx, tx, uid); err != nil {
+			return err
+		}
+		var count, next int
+		if err := tx.QueryRowxContext(ctx,
+			`SELECT count(*), coalesce(max(position) + 1, 0) FROM product_images WHERE product_uid = $1`, uid).Scan(&count, &next); err != nil {
+			return err
+		}
+		if count >= ports.MaxImages {
+			return httperr.ConflictError(fmt.Sprintf("limite de %d fotos por produto atingido", ports.MaxImages))
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO product_images (product_uid, image_key, position) VALUES ($1, $2, $3)`, uid, key, next)
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			switch pqErr.Constraint {
+			case "product_images_image_key_key":
+				return httperr.ConflictError("essa foto já está cadastrada")
+			case "product_images_position_key": // rede de segurança: duas adições tentaram a mesma posição
+				return httperr.ConflictError("outra foto foi adicionada ao mesmo tempo; tente de novo")
+			}
+		}
+		return err
+	})
+}
+
+func (r *Repository) RemoveImage(ctx context.Context, uid, key string) error {
+	if _, err := uuid.Parse(uid); err != nil {
+		return errProductNotFound
+	}
+	return r.inTx(ctx, func(tx *sqlx.Tx) error {
+		if err := lockProduct(ctx, tx, uid); err != nil {
+			return err
+		}
+		res, err := tx.ExecContext(ctx, `DELETE FROM product_images WHERE product_uid = $1 AND image_key = $2`, uid, key)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return httperr.NotFoundError("foto não encontrada")
+		}
+		// Fecha o buraco: as posições voltam a ser 0, 1, 2... (a restrição de unicidade só é conferida no fim).
+		_, err = tx.ExecContext(ctx, `
+			UPDATE product_images p SET position = s.rn - 1
+			  FROM (SELECT id, row_number() OVER (ORDER BY position) AS rn FROM product_images WHERE product_uid = $1) s
+			 WHERE p.id = s.id`, uid)
+		return err
+	})
+}
+
+func (r *Repository) ReorderImages(ctx context.Context, uid string, keys []string) error {
+	if _, err := uuid.Parse(uid); err != nil {
+		return errProductNotFound
+	}
+	return r.inTx(ctx, func(tx *sqlx.Tx) error {
+		if err := lockProduct(ctx, tx, uid); err != nil {
+			return err
+		}
+		var current []string
+		if err := tx.SelectContext(ctx, &current, `SELECT image_key FROM product_images WHERE product_uid = $1`, uid); err != nil {
+			return err
+		}
+		if !samePhotos(current, keys) {
+			return httperr.RequiredError("a nova ordem precisa ter exatamente as fotos atuais, sem repetir")
+		}
+		_, err := tx.ExecContext(ctx, `
+			UPDATE product_images pi SET position = t.ord - 1
+			  FROM unnest($2::text[]) WITH ORDINALITY AS t(key, ord)
+			 WHERE pi.product_uid = $1 AND pi.image_key = t.key`, uid, pq.Array(keys))
+		return err
+	})
+}
+
+// samePhotos: as duas listas têm exatamente os mesmos itens (qualquer ordem, sem repetir).
+func samePhotos(current, wanted []string) bool {
+	if len(current) != len(wanted) {
+		return false
+	}
+	seen := make(map[string]bool, len(wanted))
+	for _, k := range wanted {
+		if seen[k] {
+			return false
+		}
+		seen[k] = true
+	}
+	for _, k := range current {
+		if !seen[k] {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *Repository) inTx(ctx context.Context, fn func(*sqlx.Tx) error) error {
@@ -169,7 +289,7 @@ func (r *Repository) GetBySlug(ctx context.Context, slug string) (catalog.Produc
 	if err != nil {
 		return nil, err
 	}
-	return rw.product(), nil
+	return r.one(ctx, rw)
 }
 
 func (r *Repository) ExistsBySlug(ctx context.Context, slug string) (bool, error) {
@@ -218,9 +338,17 @@ func (r *Repository) List(ctx context.Context, f ports.Filter) ([]catalog.Produc
 	if err := r.db.SelectContext(ctx, &rows, query, args...); err != nil {
 		return nil, err
 	}
+	uids := make([]string, 0, len(rows))
+	for _, rw := range rows {
+		uids = append(uids, rw.UID)
+	}
+	imgs, err := r.imagesFor(ctx, uids)
+	if err != nil {
+		return nil, err
+	}
 	result := make([]catalog.Product, 0, len(rows))
 	for _, rw := range rows {
-		result = append(result, rw.product())
+		result = append(result, rw.product(imgs[rw.UID]))
 	}
 	return result, nil
 }

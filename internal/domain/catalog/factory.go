@@ -31,6 +31,7 @@ func NewProductFactory() ProductFactory {
 // NewProductFactoryFrom parte de um produto existente (edição). Identidade, slug e estoque são mantidos.
 func NewProductFactoryFrom(p Product) ProductFactory {
 	copied := *(p.(*product))
+	copied.images = append([]string(nil), copied.images...)
 	return &productFactory{product: &copied}
 }
 
