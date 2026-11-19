@@ -65,7 +65,7 @@ type Deps struct {
 }
 
 func NewRouter(d Deps) nethttp.Handler {
-	gin.SetMode(gin.ReleaseMode)
+	gin.SetMode(gin.DebugMode)
 	r := gin.New()
 	// Por padrão ninguém é confiável: ClientIP usa o endereço real da conexão e ignora X-Forwarded-For,
 	// que um atacante forjaria para escapar do limite de tentativas. Só os proxies listados valem.
