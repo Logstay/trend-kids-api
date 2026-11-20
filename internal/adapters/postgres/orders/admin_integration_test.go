@@ -5,7 +5,6 @@ package orders_test
 import (
 	"context"
 	"errors"
-	"sync"
 	"testing"
 
 	"github.com/Logstay/trend-kids-api/internal/domain/orders"
@@ -56,7 +55,7 @@ func TestUpdateStatus_AdvancesRecordsEventAndKeepsStock(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, orders.StatusPaid, got.Status())
-	assert.Equal(t, 3, e.stock(t, rosa), "pagar não mexe no estoque")
+	assert.Equal(t, 5, e.stock(t, rosa), "pagar não mexe no estoque")
 	events, _ := e.orders.Events(context.Background(), o.UID())
 	require.Len(t, events, 2)
 	assert.Equal(t, orders.StatusNew, events[1].From)
@@ -84,36 +83,23 @@ func TestUpdateStatus_UnknownCodeIsNotFound(t *testing.T) {
 	assert.True(t, errors.As(err, &nf))
 }
 
-func TestCancel_GivesStockBackWithLedgerEntry(t *testing.T) {
+func TestCancel_DoesNotTouchStock(t *testing.T) {
 	e := newEnv(t)
 	rosa := e.product(t, "Classic Clog Rosa", 18990, 5)
 	charms := e.product(t, "Kit 5 Charms", 4990, 3)
 	o := e.place(t, line{rosa, 2}, line{charms, 3})
-	require.Equal(t, 3, e.stock(t, rosa))
-	require.Equal(t, 0, e.stock(t, charms))
-	admin := uuid.NewString()
+	movementsBefore := e.count(t, "stock_movements")
 
-	got, err := e.change(o.Code(), orders.StatusCancelled, admin)
+	got, err := e.change(o.Code(), orders.StatusCancelled, uuid.NewString())
 
 	require.NoError(t, err)
 	assert.Equal(t, orders.StatusCancelled, got.Status())
-	assert.Equal(t, 5, e.stock(t, rosa), "devolveu os 2 pares")
-	assert.Equal(t, 3, e.stock(t, charms), "devolveu os 3 kits")
-
-	var mv struct {
-		Delta    int    `db:"delta"`
-		Reason   string `db:"reason"`
-		OrderUID string `db:"order_uid"`
-		Admin    string `db:"admin_uid"`
-	}
-	require.NoError(t, e.db.Get(&mv, `SELECT delta, reason, order_uid::text, admin_uid::text FROM stock_movements WHERE product_uid = $1 AND delta > 0 AND reason LIKE 'pedido cancelado%'`, rosa.UID()))
-	assert.Equal(t, 2, mv.Delta)
-	assert.Contains(t, mv.Reason, o.Code())
-	assert.Equal(t, o.UID(), mv.OrderUID)
-	assert.Equal(t, admin, mv.Admin)
+	assert.Equal(t, 5, e.stock(t, rosa), "o estoque nunca foi baixado, então não há o que devolver")
+	assert.Equal(t, 3, e.stock(t, charms))
+	assert.Equal(t, movementsBefore, e.count(t, "stock_movements"))
 }
 
-func TestCancel_AlsoWorksFromPaidAndRestoresEvenIfProductIsNowInactive(t *testing.T) {
+func TestCancel_FromPaidWorksEvenIfProductIsNowInactive(t *testing.T) {
 	e := newEnv(t)
 	rosa := e.product(t, "Classic Clog Rosa", 18990, 5)
 	o := e.place(t, line{rosa, 2})
@@ -128,7 +114,7 @@ func TestCancel_AlsoWorksFromPaidAndRestoresEvenIfProductIsNowInactive(t *testin
 	assert.Equal(t, 5, e.stock(t, rosa))
 }
 
-func TestCancel_AfterShippingIsRefusedAndStockStaysOut(t *testing.T) {
+func TestCancel_AfterShippingIsRefusedAndStockUnchanged(t *testing.T) {
 	e := newEnv(t)
 	rosa := e.product(t, "Classic Clog Rosa", 18990, 5)
 	o := e.place(t, line{rosa, 2})
@@ -140,73 +126,7 @@ func TestCancel_AfterShippingIsRefusedAndStockStaysOut(t *testing.T) {
 	_, err := e.change(o.Code(), orders.StatusCancelled, "")
 
 	require.True(t, isConflict(err))
-	assert.Equal(t, 3, e.stock(t, rosa))
-}
-
-// Dois cliques em "cancelar" (ou duas abas) não podem devolver o estoque duas vezes.
-func TestCancel_ConcurrentCancelsRestoreStockExactlyOnce(t *testing.T) {
-	e := newEnv(t)
-	rosa := e.product(t, "Classic Clog Rosa", 18990, 5)
-	o := e.place(t, line{rosa, 2})
-
-	const clicks = 8
-	var wg sync.WaitGroup
-	errs := make(chan error, clicks)
-	for i := 0; i < clicks; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_, err := e.change(o.Code(), orders.StatusCancelled, "")
-			errs <- err
-		}()
-	}
-	wg.Wait()
-	close(errs)
-
-	ok, refused := 0, 0
-	for err := range errs {
-		switch {
-		case err == nil:
-			ok++
-		case isConflict(err):
-			refused++
-		default:
-			t.Fatalf("erro inesperado: %v", err)
-		}
-	}
-	assert.Equal(t, 1, ok)
-	assert.Equal(t, clicks-1, refused)
-	assert.Equal(t, 5, e.stock(t, rosa), "voltou ao estoque original, nem um a mais")
-}
-
-// Enviar e cancelar ao mesmo tempo: só um vence, e o estoque tem que bater com o vencedor.
-func TestShipVersusCancelRace_StockMatchesTheWinner(t *testing.T) {
-	e := newEnv(t)
-	rosa := e.product(t, "Classic Clog Rosa", 18990, 1000)
-
-	for i := 0; i < 15; i++ {
-		o := e.place(t, line{rosa, 1})
-		_, err := e.change(o.Code(), orders.StatusPaid, "")
-		require.NoError(t, err)
-		before := e.stock(t, rosa) // com este pedido ainda "fora" do estoque
-
-		var wg sync.WaitGroup
-		var shipErr, cancelErr error
-		wg.Add(2)
-		go func() { defer wg.Done(); _, shipErr = e.change(o.Code(), orders.StatusShipped, "") }()
-		go func() { defer wg.Done(); _, cancelErr = e.change(o.Code(), orders.StatusCancelled, "") }()
-		wg.Wait()
-
-		require.True(t, (shipErr == nil) != (cancelErr == nil), "exatamente um vence (envio=%v cancelamento=%v)", shipErr, cancelErr)
-		final, _ := e.orders.GetByCode(context.Background(), o.Code())
-		if cancelErr == nil {
-			assert.Equal(t, orders.StatusCancelled, final.Status())
-			assert.Equal(t, before+1, e.stock(t, rosa), "cancelou: devolveu")
-		} else {
-			assert.Equal(t, orders.StatusShipped, final.Status())
-			assert.Equal(t, before, e.stock(t, rosa), "enviou: estoque continua fora")
-		}
-	}
+	assert.Equal(t, 5, e.stock(t, rosa))
 }
 
 func TestList_FiltersByStatusNewestFirstWithItemsAndPaging(t *testing.T) {

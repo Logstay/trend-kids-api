@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/Logstay/trend-kids-api/internal/domain/orders"
@@ -39,48 +38,16 @@ func (r *Repository) Create(ctx context.Context, o orders.Order) error {
 			return err
 		}
 
-		items := o.Items()
-		for _, it := range items { // na ordem do carrinho, para a exibição bater com o que a pessoa montou
+		// O estoque NÃO é baixado aqui: por enquanto o vendedor dá a baixa depois (ver README).
+		for _, it := range o.Items() { // na ordem do carrinho, para a exibição bater com o que a pessoa montou
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO order_items (order_uid, product_uid, name_snapshot, unit_price_cents, quantity)
 				VALUES ($1, $2, $3, $4, $5)`, o.UID(), it.ProductUID, it.Name, it.UnitPriceCents, it.Quantity); err != nil {
 				return err
 			}
 		}
-
-		// Baixa de estoque em ORDEM FIXA de produto. Dois pedidos com os mesmos produtos em ordem
-		// oposta travariam um ao outro (deadlock) se bloqueassem na ordem do carrinho.
-		sort.Slice(items, func(i, j int) bool { return items[i].ProductUID < items[j].ProductUID })
-		for _, it := range items {
-			if err := decrementStock(ctx, tx, o, it); err != nil {
-				return err
-			}
-		}
 		return nil
 	})
-}
-
-// decrementStock é atômico: o UPDATE condicional trava a linha e reavalia o saldo já atualizado.
-func decrementStock(ctx context.Context, tx *sqlx.Tx, o orders.Order, it orders.Item) error {
-	var stock int
-	err := tx.GetContext(ctx, &stock, `
-		UPDATE products SET stock = stock - $2, updated_at = now()
-		 WHERE uid = $1 AND active AND stock >= $2
-		RETURNING stock`, it.ProductUID, it.Quantity)
-	if errors.Is(err, sql.ErrNoRows) {
-		var active bool
-		if err := tx.GetContext(ctx, &active, `SELECT active FROM products WHERE uid = $1`, it.ProductUID); err == nil && !active {
-			return httperr.ConflictError(fmt.Sprintf("produto indisponível: %s", it.Name))
-		}
-		return httperr.ConflictError(fmt.Sprintf("estoque insuficiente: %s", it.Name))
-	}
-	if err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO stock_movements (product_uid, delta, reason, order_uid)
-		VALUES ($1, $2, $3, $4)`, it.ProductUID, -it.Quantity, "pedido "+o.Code(), o.UID())
-	return err
 }
 
 type orderRow struct {
@@ -240,39 +207,12 @@ func (r *Repository) UpdateStatus(ctx context.Context, c ports.ChangeStatus) (or
 			return err
 		}
 
-		if c.To == orders.StatusCancelled {
-			return restoreStock(ctx, tx, cur.UID, cur.Code, c.AdminUID)
-		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	return r.GetByCode(ctx, c.Code)
-}
-
-// restoreStock devolve ao estoque o que o pedido tinha baixado, em ordem fixa de produto
-// (a mesma da criação), para pedidos e cancelamentos simultâneos nunca travarem um ao outro.
-func restoreStock(ctx context.Context, tx *sqlx.Tx, orderUID, code, adminUID string) error {
-	var items []struct {
-		ProductUID string `db:"product_uid"`
-		Quantity   int    `db:"quantity"`
-	}
-	if err := tx.SelectContext(ctx, &items,
-		`SELECT product_uid::text AS product_uid, quantity FROM order_items WHERE order_uid = $1 ORDER BY product_uid`, orderUID); err != nil {
-		return err
-	}
-	for _, it := range items {
-		if _, err := tx.ExecContext(ctx, `UPDATE products SET stock = stock + $2, updated_at = now() WHERE uid = $1`, it.ProductUID, it.Quantity); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO stock_movements (product_uid, delta, reason, order_uid, admin_uid)
-			VALUES ($1, $2, $3, $4, NULLIF($5, '')::uuid)`, it.ProductUID, it.Quantity, "pedido cancelado "+code, orderUID, adminUID); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func isCodeTaken(err error) bool {

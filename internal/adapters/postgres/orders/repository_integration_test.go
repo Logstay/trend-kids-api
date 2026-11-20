@@ -5,9 +5,7 @@ package orders_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
-	"sync"
 	"testing"
 
 	pgcatalog "github.com/Logstay/trend-kids-api/internal/adapters/postgres/catalog"
@@ -92,24 +90,16 @@ func (e env) count(t *testing.T, table string) int {
 	return n
 }
 
-func TestCreate_PersistsOrderAndDecrementsStockWithLedger(t *testing.T) {
+func TestCreate_PersistsOrderWithoutTouchingStock(t *testing.T) {
 	e := newEnv(t)
 	rosa := e.product(t, "Classic Clog Rosa", 18990, 5)
 	o := order(t, line{rosa, 2})
+	movementsBefore := e.count(t, "stock_movements")
 
 	require.NoError(t, e.orders.Create(context.Background(), o))
 
-	assert.Equal(t, 3, e.stock(t, rosa))
-	var mv struct {
-		Delta    int     `db:"delta"`
-		Reason   string  `db:"reason"`
-		OrderUID *string `db:"order_uid"`
-	}
-	require.NoError(t, e.db.Get(&mv, `SELECT delta, reason, order_uid::text FROM stock_movements WHERE delta < 0`))
-	assert.Equal(t, -2, mv.Delta)
-	assert.Contains(t, mv.Reason, o.Code())
-	require.NotNil(t, mv.OrderUID)
-	assert.Equal(t, o.UID(), *mv.OrderUID)
+	assert.Equal(t, 5, e.stock(t, rosa), "o pedido não baixa estoque: quem dá a baixa é o vendedor")
+	assert.Equal(t, movementsBefore, e.count(t, "stock_movements"))
 }
 
 func TestGetByCode_RoundTripKeepsSnapshots(t *testing.T) {
@@ -141,38 +131,6 @@ func TestGetByCode_UnknownIsNotFound(t *testing.T) {
 	assert.True(t, errors.As(err, &nf))
 }
 
-func TestCreate_IsAllOrNothingAcrossItems(t *testing.T) {
-	e := newEnv(t)
-	rosa := e.product(t, "Classic Clog Rosa", 18990, 5)
-	charms := e.product(t, "Kit 5 Charms", 4990, 1)
-	movementsBefore := e.count(t, "stock_movements")
-
-	err := e.orders.Create(context.Background(), order(t, line{rosa, 2}, line{charms, 2})) // charms: só 1
-
-	var conflict httperr.ConflictError
-	require.True(t, errors.As(err, &conflict))
-	assert.Contains(t, err.Error(), "Kit 5 Charms")
-	assert.Equal(t, 5, e.stock(t, rosa), "a baixa do primeiro item foi desfeita")
-	assert.Equal(t, 1, e.stock(t, charms))
-	assert.Equal(t, 0, e.count(t, "orders"))
-	assert.Equal(t, 0, e.count(t, "order_items"))
-	assert.Equal(t, movementsBefore, e.count(t, "stock_movements"))
-}
-
-func TestCreate_RefusesInactiveProduct(t *testing.T) {
-	e := newEnv(t)
-	rosa := e.product(t, "Classic Clog Rosa", 18990, 5)
-	_, err := e.db.Exec(`UPDATE products SET active = false WHERE uid = $1`, rosa.UID())
-	require.NoError(t, err)
-
-	err = e.orders.Create(context.Background(), order(t, line{rosa, 1}))
-
-	var conflict httperr.ConflictError
-	require.True(t, errors.As(err, &conflict))
-	assert.Contains(t, err.Error(), "indisponível")
-	assert.Equal(t, 5, e.stock(t, rosa))
-}
-
 func TestCreate_DuplicateCodeReturnsErrCodeTaken(t *testing.T) {
 	e := newEnv(t)
 	rosa := e.product(t, "Classic Clog Rosa", 18990, 9)
@@ -187,70 +145,5 @@ func TestCreate_DuplicateCodeReturnsErrCodeTaken(t *testing.T) {
 	err := e.orders.Create(context.Background(), clone)
 
 	assert.ErrorIs(t, err, ports.ErrCodeTaken)
-	assert.Equal(t, 8, e.stock(t, rosa), "a segunda tentativa não baixou estoque")
-}
-
-// A regra crítica: o último par não pode ser vendido duas vezes.
-func TestCreate_ConcurrentOrdersNeverOversell(t *testing.T) {
-	e := newEnv(t)
-	rosa := e.product(t, "Classic Clog Rosa", 18990, 3)
-
-	const buyers = 10
-	var wg sync.WaitGroup
-	results := make(chan error, buyers)
-	for i := 0; i < buyers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			results <- e.orders.Create(context.Background(), order(t, line{rosa, 1}))
-		}()
-	}
-	wg.Wait()
-	close(results)
-
-	sold := 0
-	for err := range results {
-		var conflict httperr.ConflictError
-		switch {
-		case err == nil:
-			sold++
-		case errors.As(err, &conflict):
-		default:
-			t.Fatalf("erro inesperado: %v", err)
-		}
-	}
-	assert.Equal(t, 3, sold)
-	assert.Equal(t, 0, e.stock(t, rosa))
-	assert.Equal(t, 3, e.count(t, "orders"))
-}
-
-// Dois pedidos com os mesmos produtos em ordem oposta travariam um ao outro (deadlock)
-// se as linhas fossem bloqueadas na ordem do pedido. O repositório precisa travar em ordem fixa.
-func TestCreate_OppositeItemOrderNeverDeadlocks(t *testing.T) {
-	e := newEnv(t)
-	a := e.product(t, "Produto A", 1000, 1000)
-	b := e.product(t, "Produto B", 2000, 1000)
-
-	const workers = 24
-	var wg sync.WaitGroup
-	errs := make(chan error, workers)
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			lines := []line{{a, 1}, {b, 1}}
-			if i%2 == 1 {
-				lines = []line{{b, 1}, {a, 1}}
-			}
-			errs <- e.orders.Create(context.Background(), order(t, lines...))
-		}(i)
-	}
-	wg.Wait()
-	close(errs)
-
-	for err := range errs {
-		require.NoError(t, err, fmt.Sprintf("deadlock ou falha com %d trabalhadores simultâneos", workers))
-	}
-	assert.Equal(t, 1000-workers, e.stock(t, a))
-	assert.Equal(t, 1000-workers, e.stock(t, b))
+	assert.Equal(t, 9, e.stock(t, rosa), "nenhum pedido baixa estoque")
 }

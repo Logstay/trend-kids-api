@@ -14,7 +14,7 @@ migrate:
 	--net=host \
 	-v $(PWD)/config/migrations:/flyway/conf \
 	-v $(PWD)/config/migrations/sql:/flyway/sql \
-	flyway/flyway:11 \
+	flyway/flyway:13.13.0 \
 	-configFiles=/flyway/conf/flyway.local.conf \
 	migrate
 
@@ -23,7 +23,7 @@ migrate_test:
 	--net=host \
 	-v $(PWD)/config/migrations:/flyway/conf \
 	-v $(PWD)/config/migrations/sql:/flyway/sql \
-	flyway/flyway:11 \
+	flyway/flyway:13.13.0 \
 	-configFiles=/flyway/conf/flyway.test.conf \
 	migrate
 
