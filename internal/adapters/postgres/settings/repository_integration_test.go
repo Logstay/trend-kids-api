@@ -29,7 +29,7 @@ func newRepo(t *testing.T) (*pgsettings.Repository, *sqlx.DB) {
 
 	_, err = db.Exec(`DROP TABLE IF EXISTS store_settings`)
 	require.NoError(t, err)
-	migration, err := os.ReadFile("../../../../config/migrations/V6__create_store_settings.sql")
+	migration, err := os.ReadFile("../../../../config/migrations/sql/V6__create_store_settings.sql")
 	require.NoError(t, err)
 	_, err = db.Exec(string(migration))
 	require.NoError(t, err)

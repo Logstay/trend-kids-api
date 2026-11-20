@@ -30,7 +30,7 @@ func newRepo(t *testing.T) *pgsellers.Repository {
 
 	_, err = db.Exec(`DROP TABLE IF EXISTS sellers`)
 	require.NoError(t, err)
-	migration, err := os.ReadFile("../../../../config/migrations/V7__create_sellers.sql")
+	migration, err := os.ReadFile("../../../../config/migrations/sql/V7__create_sellers.sql")
 	require.NoError(t, err)
 	_, err = db.Exec(string(migration))
 	require.NoError(t, err)

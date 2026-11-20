@@ -7,8 +7,25 @@ up:
 down:
 	@docker compose -f config/local/docker-compose.yml down
 
+# Migrações com Flyway (mesmo padrão do tech-challenge-os-service). Os SQLs ficam em config/migrations/sql/V<n>__nome.sql.
+# Sem -ti: funciona também fora de terminal interativo.
 migrate:
-	@for f in config/migrations/V*.sql; do psql "$(DB_URL)" -v ON_ERROR_STOP=1 -q -f $$f 2>&1 | grep -v NOTICE; done; true
+	@docker run --rm \
+	--net=host \
+	-v $(PWD)/config/migrations:/flyway/conf \
+	-v $(PWD)/config/migrations/sql:/flyway/sql \
+	flyway/flyway:11 \
+	-configFiles=/flyway/conf/flyway.local.conf \
+	migrate
+
+migrate_test:
+	@docker run --rm \
+	--net=host \
+	-v $(PWD)/config/migrations:/flyway/conf \
+	-v $(PWD)/config/migrations/sql:/flyway/sql \
+	flyway/flyway:11 \
+	-configFiles=/flyway/conf/flyway.test.conf \
+	migrate
 
 unit_test:
 	@go test ./...

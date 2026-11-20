@@ -33,7 +33,7 @@ func newRepo(t *testing.T) (*pgcatalog.Repository, *sqlx.DB) {
 	_, err = db.Exec(`DROP TABLE IF EXISTS products`)
 	require.NoError(t, err)
 	for _, file := range []string{"V1__create_products.sql", "V3__create_stock_movements.sql", "V8__add_product_image.sql", "V9__create_product_images.sql"} {
-		migration, err := os.ReadFile("../../../../config/migrations/" + file)
+		migration, err := os.ReadFile("../../../../config/migrations/sql/" + file)
 		require.NoError(t, err)
 		_, err = db.Exec(string(migration))
 		require.NoError(t, err)

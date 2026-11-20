@@ -27,7 +27,7 @@ func newRepo(t *testing.T) *pgidentity.Repository {
 	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })
 
-	migration, err := os.ReadFile("../../../../config/migrations/V2__create_admin_users.sql")
+	migration, err := os.ReadFile("../../../../config/migrations/sql/V2__create_admin_users.sql")
 	require.NoError(t, err)
 	_, err = db.Exec(`DROP TABLE IF EXISTS admin_users`)
 	require.NoError(t, err)

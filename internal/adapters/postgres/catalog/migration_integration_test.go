@@ -14,7 +14,7 @@ import (
 
 func apply(t *testing.T, db *sqlx.DB, file string) {
 	t.Helper()
-	sqlText, err := os.ReadFile("../../../../config/migrations/" + file)
+	sqlText, err := os.ReadFile("../../../../config/migrations/sql/" + file)
 	require.NoError(t, err)
 	_, err = db.Exec(string(sqlText))
 	require.NoError(t, err, file)
